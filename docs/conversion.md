@@ -149,7 +149,7 @@ torch.onnx.export(
         "input_lengths": {0: "batch"},
         "logprobs": {0: "batch", 1: "frames"},
     },
-    opset_version=17,
+    opset_version=18,
 )
 
 vocab = processor.tokenizer.get_vocab()
@@ -163,7 +163,7 @@ with (onnx_dir / "vocab.txt").open("wt") as f:
 
 subsampling_factor = 1
 for layer in model.wav2vec2.feature_extractor.conv_layers:
-    stride = layer.stride
+    stride = layer.conv.stride
     subsampling_factor *= stride[0] if isinstance(stride, tuple) else stride
 
 with (onnx_dir / "config.json").open("wt") as f:

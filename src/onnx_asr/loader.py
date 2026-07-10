@@ -92,7 +92,17 @@ AsrTypes: TypeAlias = (
 def create_asr_resolver(
     model: str | None = None, local_dir: str | Path | None = None, *, offline: bool | None = None
 ) -> Resolver[AsrTypes]:
-    """Create resolver for ASR models."""
+    """
+    Create a resolver for automatic speech recognition models.
+    
+    Parameters:
+    	model (str | None): Model identifier to resolve.
+    	local_dir (str | Path | None): Local directory containing model files.
+    	offline (bool | None): Whether to restrict model resolution to locally available files.
+    
+    Returns:
+    	Resolver[AsrTypes]: Resolver configured with the supported ASR model mappings.
+    """
     model_types: dict[str, type[AsrTypes]] = {
         "gigaam-v2-ctc": GigaamV2Ctc,
         "gigaam-v2-rnnt": GigaamV2Rnnt,
@@ -316,45 +326,25 @@ def load_model(
     preprocessor_config: PreprocessorRuntimeConfig | None = None,
     resampler_config: OnnxSessionOptions | None = None,
 ) -> TextResultsAsrAdapter:
-    """Load ASR model.
-
+    """Load an ASR model with the specified runtime configuration.
+    
     Args:
-        model: Model name or type (download from Hugging Face supported if full model name is provided):
-
-                GigaAM v2 (`gigaam-v2-ctc` | `gigaam-v2-rnnt`)
-                GigaAM v3 (`gigaam-v3-ctc` | `gigaam-v3-rnnt` |
-                           `gigaam-v3-e2e-ctc` | `gigaam-v3-e2e-rnnt`)
-                Kaldi Transducer (`kaldi-rnnt`)
-                NeMo Conformer (`nemo-conformer-ctc` | `nemo-conformer-rnnt` | `nemo-conformer-tdt` |
-                                `nemo-conformer-aed`)
-                NeMo FastConformer Hybrid Large Ru P&C (`nemo-fastconformer-ru-ctc` |
-                                                        `nemo-fastconformer-ru-rnnt`)
-                NeMo Parakeet 0.6B En (`nemo-parakeet-ctc-0.6b` | `nemo-parakeet-rnnt-0.6b` |
-                                       `nemo-parakeet-tdt-0.6b-v2`)
-                NeMo Parakeet 0.6B Multilingual (`nemo-parakeet-tdt-0.6b-v3`)
-                NeMo Canary (`nemo-canary-1b-v2`)
-                T-One (`t-one-ctc` | `t-tech/t-one`)
-                Vosk (`vosk` | `alphacep/vosk-model-ru` | `alphacep/vosk-model-small-ru`)
-                Wav2Vec2 CTC (`wav2vec2-ctc`)
-                Whisper Base exported with onnxruntime (`whisper-ort` | `whisper-base-ort`)
-                Whisper from onnx-community (`whisper` | `onnx-community/whisper-large-v3-turbo` |
-                                             `onnx-community/*whisper*`)
-        path: Path to directory with model files.
-        quantization: Model quantization (`None` | `int8` | ... ).
-        sess_options: Default SessionOptions for onnxruntime.
-        providers: Default providers for onnxruntime.
-        provider_options: Default provider_options for onnxruntime.
-        cpu_preprocessing: Deprecated and ignored, use `preprocessor_config` and `resampler_config` instead.
-        asr_config: ASR ONNX config.
-        preprocessor_config: Preprocessor ONNX and concurrency config.
-        resampler_config: Resampler ONNX config.
-
+        model: Model name or type. Supported options include GigaAM, Kaldi
+            Transducer, NeMo Conformer, T-One, Vosk, Wav2Vec2 CTC
+            (`wav2vec2-ctc`), and Whisper models.
+        path: Path to the directory containing local model files.
+        quantization: Model quantization identifier, such as `int8`.
+        sess_options: Default ONNX Runtime session options.
+        providers: Default ONNX Runtime execution providers.
+        provider_options: Default options for the ONNX Runtime providers.
+        cpu_preprocessing: Deprecated and ignored. Use `preprocessor_config` and
+            `resampler_config` instead.
+        asr_config: ONNX Runtime configuration for the ASR model.
+        preprocessor_config: Configuration for preprocessing and its concurrency.
+        resampler_config: ONNX Runtime configuration for resampling.
+    
     Returns:
-        ASR model class.
-
-    Raises:
-        utils.ModelLoadingError: Model loading error (onnx-asr specific).
-
+        An initialized ASR model adapter.
     """
     if cpu_preprocessing is not None:
         warnings.warn(

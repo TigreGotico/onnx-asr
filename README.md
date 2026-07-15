@@ -77,6 +77,7 @@ The package supports the following modern ASR model architectures (see the [supp
 * GigaChat GigaAM v2/v3 (with CTC and RNN-T decoders, including E2E versions)
 * Kaldi Icefall Zipformer (with stateless RNN-T decoder) including Alpha Cephei Vosk 0.52+
 * T-Tech T-one (with CTC decoder, no streaming support yet)
+* HuggingFace Wav2Vec2 (with CTC decoder)
 * OpenAI Whisper
 
 When saving these models in ONNX format, usually only the encoder and decoder are saved. To run them, the corresponding preprocessor and decoding must be implemented. Therefore, the package contains these implementations for all supported models:

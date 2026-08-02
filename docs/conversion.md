@@ -206,7 +206,8 @@ Add a `config.json`:
     "max_sequence_length": 512,
     "prompt_prefix_ids": [151644, 8948],
     "prompt_suffix_ids": [151645, 198],
-    "language_prompt_ids": {"English": [151644, 8948]}
+    "language_prompt_ids": {"English": [151644, 8948]},
+    "text_start_token_id": 151704
 }
 ```
 
@@ -214,7 +215,10 @@ The prompt token ids are encoded at export time with the Hugging Face tokenizer,
 so the package needs no tokenizer at runtime. `prompt_prefix_ids` ends with the
 audio start token and `prompt_suffix_ids` starts with the audio end token; the
 audio embeddings go between them. `language_prompt_ids` is optional and gives one
-prefix per language for the `language` argument.
+prefix per language for the `language` argument. `text_start_token_id` is also
+optional: some models write a preamble before the transcription (Qwen3-ASR
+writes the detected language), and the runtime drops everything up to and
+including that marker token.
 
 For detokenization, save the tokenizer vocabulary as `vocab.json` (a
 `{token: id}` map). Byte-level BPE tokens are decoded with the standard GPT-2

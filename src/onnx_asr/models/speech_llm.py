@@ -66,6 +66,7 @@ class SpeechLlm(BaseAsr):
         self._suffix_ids = config["prompt_suffix_ids"]
         self._language_prompt_ids: dict[str, list[int]] = config.get("language_prompt_ids", {})
         self._eos_token_ids = set(config["eos_token_ids"])
+        self._text_start_token_id = config.get("text_start_token_id")
         self._max_sequence_length = config.get("max_sequence_length", 512)
 
         self._n_window = config["n_window"]
@@ -189,6 +190,11 @@ class SpeechLlm(BaseAsr):
         return tokens
 
     def _decode_tokens(self, tokens: list[int]) -> TimestampedResult:
+        # Some models answer with a preamble (Qwen3-ASR writes the detected language first)
+        # and start the transcription after a marker token.
+        if self._text_start_token_id in tokens:
+            tokens = tokens[tokens.index(self._text_start_token_id) + 1 :]
+
         text = "".join(token for id in tokens if (token := self._vocab[id]) and not token.startswith("<|"))
         return TimestampedResult(
             bytearray([self._byte_decoder[c] for c in text]).decode("utf-8", errors="replace").strip()

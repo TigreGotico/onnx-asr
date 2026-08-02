@@ -295,3 +295,25 @@ For attention decoding, export `EspnetEncoderCtc.encode` as `encoder.onnx` (outp
 `tokens`, `encoder_out` and `encoder_out_lens`, output `logprobs`), and set `model_type`
 to `espnet-aed`. The decoder graph has no key-value cache, onnx-asr recomputes it over
 the whole prefix at every step.
+
+### Notes
+
+Use the `torch.export` based exporter (`dynamo=True`). With the older TorchScript
+exporter the branch-merge `torch.cat` of the E-Branchformer layer fails to convert
+(`All tensors must have the same rank`), because the rank of the attention output is not
+known statically after its reshape.
+
+The frontend makes the graph larger than the 2 GB protobuf limit, so the weights go into
+a sidecar file. Save it as `<name>.onnx_data` next to the graph; that is the name
+onnx-asr looks for.
+
+Trim the features to `features_lens.max()` before the encoder. ESPnet builds its masks
+with length `max(ilens)`, and the 2 frame stacking of the preprocessor can leave one
+extra half-padded frame, which would put the subsampled mask out of step with the
+convolution output.
+
+Some published ESPnet checkpoints are trained with recipe code that is not in any ESPnet
+release. `inesc-id/EBranch-w2vBERT2-EP`, for example, sets `use_rope: true` and
+`pos_enc_layer_type: ''`, which no public ESPnet accepts. Check that the checkpoint loads
+with `strict=True` before you export; if keys such as `attn.use_rope.freqs` are reported
+as unexpected, the model needs code that the release does not have.

@@ -237,7 +237,12 @@ class W2vBertPreprocessorNumpy(_NumpyPreprocessor):
             features = np.pad(features, ((0, 0), (0, self._stride - features.shape[1] % self._stride), (0, 0)))
 
         features = features.reshape(features.shape[0], features.shape[1] // self._stride, -1)
-        return features, features_lens // self._stride
+        features_lens = features_lens // self._stride
+        # Stacking an odd frame count leaves one trailing half-padded frame, which the
+        # reference feature extractor also masks out. Drop it so that the frame count is
+        # exactly max(features_lens): ESPnet builds its attention masks with that length,
+        # and a longer tensor would put the subsampled mask out of step with the encoder.
+        return features[:, : features_lens.max() if features_lens.size else 0], features_lens
 
 
 class WhisperPreprocessorNumpy(_NumpyPreprocessor):

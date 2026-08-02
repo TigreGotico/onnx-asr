@@ -43,11 +43,20 @@ def test_w2vbert_preprocessor(preprocessor: W2vBertPreprocessorNumpy, waveforms:
         np.testing.assert_allclose(actual[i, :length], expected[i, :length], atol=1e-4, rtol=1e-4)
 
 
-def test_w2vbert_preprocessor_pads_last_frame(preprocessor: W2vBertPreprocessorNumpy) -> None:
+def test_w2vbert_preprocessor_drops_half_padded_frame(preprocessor: W2vBertPreprocessorNumpy) -> None:
     rng = np.random.default_rng(0)
-    # 400 + 4 * 160 samples give 5 frames, an odd number that must be padded to 3 stacked frames.
+    # 400 + 4 * 160 samples give 5 mel frames, an odd number, so stacking would leave a
+    # trailing half-padded frame. It is dropped, so the frame count is max(features_lens).
     waveform = (rng.random((1, 400 + 4 * 160), dtype=np.float32) * 2 - 1).astype(np.float32)
     features, features_lens = preprocessor(waveform, np.array([waveform.shape[-1]], dtype=np.int64))
 
-    assert features.shape == (1, 3, 160)
+    assert features.shape == (1, 2, 160)
     np.testing.assert_equal(features_lens, [2])
+
+
+def test_w2vbert_preprocessor_frames_match_max_len(
+    preprocessor: W2vBertPreprocessorNumpy, waveforms: list[np.ndarray]
+) -> None:
+    padded, lens = pad_list(waveforms)
+    features, features_lens = preprocessor(padded, lens)
+    assert features.shape[1] == features_lens.max()

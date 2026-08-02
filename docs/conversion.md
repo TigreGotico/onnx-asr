@@ -175,3 +175,56 @@ word-delimiter token (`|`) becomes `▁`, which onnx-asr converts to a literal s
 when decoding. `subsampling_factor` is the product of the feature-encoder conv strides
 (320 for the standard wav2vec2/XLS-R conv stack) and is only used to scale token
 timestamps.
+## Speech-LLM (audio encoder + projector + causal LM)
+
+Models in this family transcribe with a causal language model that receives audio
+embeddings, for example Qwen3-ASR, SLAM-ASR and Cohere Transcribe. The export has
+three graphs:
+
+| File | Inputs | Outputs |
+| --- | --- | --- |
+| `encoder.onnx` | `input_features` `(1, mel, frames)`, `valid_indices` `(L,)`, `attn_bias` `(1, 1, L, L)` | `audio_embeds` `(1, L, hidden)` |
+| `embed_tokens.onnx` | `input_ids` `(1, S)` | `inputs_embeds` `(1, S, hidden)` |
+| `decoder.onnx` | `inputs_embeds` `(1, S, hidden)`, `attn_bias` `(1, 1, S, P + S)`, `position_ids` `(1, S)`, `past_key_values.{i}.{key,value}` `(1, kv_heads, P, head_dim)` | `logits` `(1, S, vocab)`, `present.{i}.{key,value}` `(1, kv_heads, P + S, head_dim)` |
+
+`encoder.onnx` must include the projector, so its output is already in the
+embedding space of the language model. `attn_bias` is an additive float mask, so
+the runtime controls the attention pattern and the graphs need no branches. The
+audio encoder of Qwen3-ASR attends inside fixed windows, and the runtime builds
+that block-diagonal mask in NumPy.
+
+Add a `config.json`:
+
+```json
+{
+    "model_type": "speech-llm",
+    "features_size": 128,
+    "preprocessor": "whisper128",
+    "n_window": 50,
+    "n_window_infer": 800,
+    "eos_token_ids": [151643, 151645],
+    "max_sequence_length": 512,
+    "prompt_prefix_ids": [151644, 8948],
+    "prompt_suffix_ids": [151645, 198],
+    "language_prompt_ids": {"English": [151644, 8948]}
+}
+```
+
+The prompt token ids are encoded at export time with the Hugging Face tokenizer,
+so the package needs no tokenizer at runtime. `prompt_prefix_ids` ends with the
+audio start token and `prompt_suffix_ids` starts with the audio end token; the
+audio embeddings go between them. `language_prompt_ids` is optional and gives one
+prefix per language for the `language` argument.
+
+For detokenization, save the tokenizer vocabulary as `vocab.json` (a
+`{token: id}` map). Byte-level BPE tokens are decoded with the standard GPT-2
+byte table, the same way as for Whisper.
+
+An export script for `Qwen/Qwen3-ASR-0.6B-hf` is in the
+[issue #73 discussion](https://github.com/istupakov/onnx-asr/issues/73).
+
+Limitations:
+
+* The runtime processes one waveform at a time, so a batch is a loop.
+* Greedy decoding only.
+* Custom prompts are not supported; only the baked prompt ids.

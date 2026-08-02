@@ -69,6 +69,26 @@ def _make_encoder(path: Path) -> None:
     _save(graph, path)
 
 
+def _make_fixed_encoder(path: Path, audio_length: int) -> None:
+    """A Whisper style encoder: only input_features, and a fixed number of audio frames."""
+    nodes = [
+        _const("out_shape", np.array([1, audio_length, HIDDEN], dtype=np.int64)),
+        helper.make_node(
+            "ConstantOfShape",
+            ["out_shape"],
+            ["audio_embeds"],
+            value=numpy_helper.from_array(np.array([0.0], dtype=np.float32), "zero"),
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "encoder",
+        [helper.make_tensor_value_info("input_features", TensorProto.FLOAT, [1, MEL_BINS, 3000])],
+        [helper.make_tensor_value_info("audio_embeds", TensorProto.FLOAT, [1, audio_length, HIDDEN])],
+    )
+    _save(graph, path)
+
+
 def _make_embed_tokens(path: Path) -> None:
     """Every token embeds to its own id repeated over the hidden dimension."""
     nodes = [
@@ -247,3 +267,71 @@ def test_recognize_batch_with_language(model: SpeechLlm) -> None:
     results = list(model.recognize_batch(waveforms, waveforms_len, language="English"))
 
     assert [result.text for result in results] == ["hello world", "hello world"]
+
+
+SP_VOCAB = {
+    "<s>": 0,
+    "</s>": 1,
+    "▁olá": FIRST_ID,
+    "<0xC3>": FIRST_ID + 1,
+    "<|im_end|>": EOS_ID,
+}
+
+
+@pytest.fixture
+def slam_model(tmp_path: Path) -> SpeechLlm:
+    """A SLAM-ASR shaped model: fixed encoder, no prompt prefix, SentencePiece vocabulary."""
+    audio_length = 6
+    prefill = audio_length + len(SUFFIX_IDS)
+
+    _make_fixed_encoder(tmp_path / "encoder.onnx", audio_length)
+    _make_embed_tokens(tmp_path / "embed_tokens.onnx")
+    _make_decoder(tmp_path / "decoder.onnx", prefill)
+
+    with (tmp_path / "vocab.json").open("wt", encoding="utf-8") as f:
+        json.dump(SP_VOCAB, f)
+
+    config = {
+        "model_type": "speech-llm",
+        "features_size": MEL_BINS,
+        "tokenizer_type": "sentencepiece",
+        "normalize_waveform": True,
+        "eos_token_ids": [EOS_ID],
+        "max_sequence_length": 16,
+        "prompt_prefix_ids": [],
+        "prompt_suffix_ids": SUFFIX_IDS,
+    }
+    with (tmp_path / "config.json").open("wt", encoding="utf-8") as f:
+        json.dump(config, f)
+
+    files = {name: tmp_path / f"{name}.onnx" for name in ("encoder", "embed_tokens", "decoder")} | {
+        "vocab": tmp_path / "vocab.json",
+        "config": tmp_path / "config.json",
+    }
+    return SpeechLlm(files, _fake_preprocessor, {})
+
+
+def test_slam_layout_recognize(slam_model: SpeechLlm) -> None:
+    samples = int(AUDIO_SECONDS * 16_000)
+    rng = np.random.default_rng(0)
+    waveforms = rng.standard_normal((1, samples), dtype=np.float32) * 1e-3
+    waveforms_len = np.array([samples], dtype=np.int64)
+
+    results = list(slam_model.recognize_batch(waveforms, waveforms_len))
+
+    # "▁olá" + "<0xC3>" is the space marker, the word, and a dangling byte-fallback token.
+    assert results[0].text == "olá�"
+
+
+def test_waveform_normalization_is_applied(slam_model: SpeechLlm) -> None:
+    seen: list[np.ndarray] = []
+    preprocessor = slam_model._preprocessor
+    slam_model._preprocessor = lambda waveforms, lens: (seen.append(waveforms), preprocessor(waveforms, lens))[1]
+
+    samples = int(AUDIO_SECONDS * 16_000)
+    waveforms = np.full((1, samples), 3.0, dtype=np.float32)
+    waveforms[0, ::2] = 1.0
+    list(slam_model.recognize_batch(waveforms, np.array([samples], dtype=np.int64)))
+
+    assert seen[0].mean() == pytest.approx(0.0, abs=1e-5)
+    assert seen[0].std() == pytest.approx(1.0, abs=1e-4)

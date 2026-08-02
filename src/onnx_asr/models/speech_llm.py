@@ -18,6 +18,7 @@ export time, so no tokenizer encoder is needed at runtime.
 """
 
 import json
+import re
 import typing
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -32,6 +33,8 @@ from onnx_asr.onnx import OnnxSessionOptions
 from onnx_asr.utils import is_float32_array
 
 NEG_INF = np.float32(-3.4028235e38)
+SPECIAL_TOKEN_PATTERN = re.compile(r"<\|.*\|>\Z|<(?:s|/s|unk|pad)>\Z")
+BYTE_FALLBACK_PATTERN = re.compile(r"<0x([0-9A-F]{2})>")
 
 
 def _post_cnn_length(lengths: npt.NDArray[np.int64]) -> npt.NDArray[np.int64]:
@@ -61,6 +64,7 @@ class SpeechLlm(BaseAsr):
             tokens: dict[str, int] = json.load(f)
         self._vocab = {id: token for token, id in tokens.items()}
         self._byte_decoder = {v: k for k, v in bytes_to_unicode().items()}
+        self._tokenizer_type = config.get("tokenizer_type", "byte-level")
 
         self._prefix_ids = config["prompt_prefix_ids"]
         self._suffix_ids = config["prompt_suffix_ids"]
@@ -69,11 +73,13 @@ class SpeechLlm(BaseAsr):
         self._text_start_token_id = config.get("text_start_token_id")
         self._max_sequence_length = config.get("max_sequence_length", 512)
 
-        self._n_window = config["n_window"]
-        self._n_window_infer = config["n_window_infer"]
+        self._normalize_waveform = config.get("normalize_waveform", False)
+        self._n_window = config.get("n_window", 50)
+        self._n_window_infer = config.get("n_window_infer", 800)
         self._max_frames = config.get("max_frames", 3000)
         self._hop_length = config.get("hop_length", 160)
 
+        self._encoder_inputs = {x.name for x in self._encoder.get_inputs()}
         self._past_names = [x.name for x in self._decoder.get_inputs() if x.name.startswith("past_key_values.")]
         self._present_names = [name.replace("past_key_values.", "present.") for name in self._past_names]
         past_shape = next(x.shape for x in self._decoder.get_inputs() if x.name.startswith("past_key_values."))
@@ -125,15 +131,21 @@ class SpeechLlm(BaseAsr):
         return padded_frames, valid_indices, bias
 
     def _encode(self, features: npt.NDArray[np.float32], feature_len: int) -> npt.NDArray[np.float32]:
-        padded_frames, valid_indices, bias = self._audio_windows(feature_len)
-        (audio_embeds,) = self._encoder.run(
-            ["audio_embeds"],
-            {
+        # Encoders with full attention over a fixed feature length (Whisper style) need
+        # neither the packing indices nor the block-diagonal mask, so they declare only
+        # input_features and get the features unchanged.
+        inputs: dict[str, npt.NDArray[typing.Any]]
+        if self._encoder_inputs == {"input_features"}:
+            inputs = {"input_features": features[None]}
+        else:
+            padded_frames, valid_indices, bias = self._audio_windows(feature_len)
+            inputs = {
                 "input_features": features[None, :, :padded_frames],
                 "valid_indices": valid_indices,
                 "attn_bias": bias,
-            },
-        )
+            }
+
+        (audio_embeds,) = self._encoder.run(["audio_embeds"], inputs)
         assert is_float32_array(audio_embeds)
         return audio_embeds
 
@@ -195,16 +207,34 @@ class SpeechLlm(BaseAsr):
         if self._text_start_token_id in tokens:
             tokens = tokens[tokens.index(self._text_start_token_id) + 1 :]
 
-        text = "".join(token for id in tokens if (token := self._vocab[id]) and not token.startswith("<|"))
-        return TimestampedResult(
-            bytearray([self._byte_decoder[c] for c in text]).decode("utf-8", errors="replace").strip()
-        )
+        parts = [token for id in tokens if (token := self._vocab[id]) and not SPECIAL_TOKEN_PATTERN.match(token)]
+
+        if self._tokenizer_type == "sentencepiece":
+            # Replace the SentencePiece space marker, then resolve byte-fallback tokens.
+            data = bytearray()
+            for token in parts:
+                if (byte := BYTE_FALLBACK_PATTERN.fullmatch(token)) is not None:
+                    data.append(int(byte[1], 16))
+                else:
+                    data += token.replace("▁", " ").encode()
+        else:
+            data = bytearray(self._byte_decoder[char] for char in "".join(parts))
+
+        return TimestampedResult(data.decode("utf-8", errors="replace").strip())
 
     def recognize_batch(
         self, waveforms: npt.NDArray[np.float32], waveforms_len: npt.NDArray[np.int64], /, **kwargs: object | None
     ) -> Iterator[TimestampedResult]:
         """Recognize waveforms batch (processed one waveform at a time)."""
         language = typing.cast(str | None, kwargs.get("language"))
+
+        if self._normalize_waveform:
+            # SLAM-ASR models normalize the waveform to zero mean and unit variance
+            # before the feature extractor.
+            mean = waveforms.mean(axis=-1, keepdims=True)
+            var = waveforms.var(axis=-1, keepdims=True)
+            waveforms = (waveforms - mean) / np.sqrt(var + 1e-5)
+
         features, _ = self._preprocessor(waveforms, waveforms_len)
 
         for i, waveform_len in enumerate(waveforms_len):

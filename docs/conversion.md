@@ -304,8 +304,10 @@ exporter the branch-merge `torch.cat` of the E-Branchformer layer fails to conve
 known statically after its reshape.
 
 The frontend makes the graph larger than the 2 GB protobuf limit, so the weights go into
-a sidecar file. Save it as `<name>.onnx_data` next to the graph; that is the name
-onnx-asr looks for.
+a sidecar file next to the graph. The exporter writes `<name>.onnx.data`. Keep the
+sidecar in the same directory as the graph, and upload it with the model: the download
+pattern of onnx-asr is `<name>.onnx?data`, which matches `<name>.onnx.data` and
+`<name>.onnx_data`.
 
 Trim the features to `features_lens.max()` before the encoder. ESPnet builds its masks
 with length `max(ilens)`, and the 2 frame stacking of the preprocessor can leave one

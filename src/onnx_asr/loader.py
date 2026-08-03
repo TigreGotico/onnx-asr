@@ -89,8 +89,6 @@ AsrTypes: TypeAlias = (
     | NemoConformerRnnt
     | NemoConformerAED
     | OmnilingualCtc
-    | SenseVoice
-    | SpeechLlm
     | TOneCtc
     | Wav2Vec2Ctc
     | WhisperHf
@@ -125,8 +123,6 @@ def create_asr_resolver(
         "nemo-conformer-tdt": NemoConformerTdt,
         "nemo-conformer-aed": NemoConformerAED,
         "omnilingual-ctc": OmnilingualCtc,
-        "sensevoice": SenseVoice,
-        "speech-llm": SpeechLlm,
         "t-one-ctc": TOneCtc,
         "vosk": KaldiTransducer,
         "wav2vec2-ctc": Wav2Vec2Ctc,

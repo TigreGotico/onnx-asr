@@ -75,6 +75,8 @@ class SpeechLlm(BaseAsr):
         self._max_sequence_length = config.get("max_sequence_length", 512)
 
         self._normalize_waveform = config.get("normalize_waveform", False)
+        self._trim_features = int(config.get("trim_features", 0))
+        self._suppress_token_ids = np.array(config.get("suppress_token_ids", []), dtype=np.int64)
         self._n_window = config.get("n_window", 50)
         self._n_window_infer = config.get("n_window_infer", 800)
         self._max_frames = config.get("max_frames", 3000)
@@ -137,7 +139,15 @@ class SpeechLlm(BaseAsr):
         # input_features and get the features unchanged.
         inputs: dict[str, npt.NDArray[typing.Any]]
         if self._encoder_inputs == {"input_features"}:
-            inputs = {"input_features": features[None]}
+            # The Whisper preprocessor always pads to 30 s. Models trained on the
+            # unpadded features (Audio8 ARK-ASR) need the padding cut away again,
+            # because every feature frame becomes an audio embedding. `trim_features`
+            # is the frame multiple the encoder needs (subsampling x embedding merge).
+            if self._trim_features:
+                length = max(feature_len - feature_len % self._trim_features, self._trim_features)
+                inputs = {"input_features": features[None, :, :length]}
+            else:
+                inputs = {"input_features": features[None]}
         elif "input_features_lens" in self._encoder_inputs:
             # NeMo FastConformer encoders take the feature length and mask the padding
             # themselves, so they also return the valid embedding length.
@@ -211,7 +221,13 @@ class SpeechLlm(BaseAsr):
         for _ in range(self._max_sequence_length):
             logits, state = self._decode_step(inputs_embeds, state, past_length)
             past_length += inputs_embeds.shape[1]
-            token = int(logits[0, -1].argmax())
+            # Some models (Audio8 ARK-ASR) leave the special tokens in the softmax and
+            # rely on the decoder to ban them, so a greedy loop derails without this.
+            scores = logits[0, -1]
+            if self._suppress_token_ids.size:
+                scores = scores.copy()
+                scores[self._suppress_token_ids] = NEG_INF
+            token = int(scores.argmax())
             if token in self._eos_token_ids:
                 break
             tokens.append(token)

@@ -269,6 +269,34 @@ def test_recognize_batch_with_language(model: SpeechLlm) -> None:
     assert [result.text for result in results] == ["hello world", "hello world"]
 
 
+def test_trim_features_cuts_the_padding_to_a_frame_multiple(model: SpeechLlm) -> None:
+    seen: list[np.ndarray] = []
+    model._encoder = type(
+        "Stub",
+        (),
+        {"run": lambda _self, _names, inputs: seen.append(inputs["input_features"]) or [np.zeros((1, 1, HIDDEN), np.float32)]},
+    )()
+    model._encoder_inputs = {"input_features"}
+    features = np.zeros((MEL_BINS, 3000), dtype=np.float32)
+
+    model._trim_features = 0
+    model._encode(features, 205)
+    model._trim_features = 8
+    model._encode(features, 205)
+
+    assert seen[0].shape == (1, MEL_BINS, 3000)
+    assert seen[1].shape == (1, MEL_BINS, 200)
+
+
+def test_suppress_token_ids_bans_tokens_in_the_greedy_loop(model: SpeechLlm) -> None:
+    model._suppress_token_ids = np.array([FIRST_ID + 1], dtype=np.int64)
+
+    samples = int(AUDIO_SECONDS * 16_000)
+    results = list(model.recognize_batch(np.zeros((1, samples), dtype=np.float32), np.array([samples], dtype=np.int64)))
+
+    assert "world" not in results[0].text
+
+
 SP_VOCAB = {
     "<s>": 0,
     "</s>": 1,

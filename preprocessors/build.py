@@ -32,6 +32,7 @@ def save_preprocessor_models(preprocessors_dir: Path, version: str) -> None:
         "wespeaker.onnx": kaldi.WespeakerPreprocessor,
         "nemo80.onnx": nemo.NemoPreprocessor80,
         "nemo128.onnx": nemo.NemoPreprocessor128,
+        "nemo128_raw.onnx": nemo.NemoPreprocessor128Raw,
         "whisper80.onnx": whisper.WhisperPreprocessor80,
         "whisper128.onnx": whisper.WhisperPreprocessor128,
         "gigaam_v2_conv.onnx": gigaam.GigaamPreprocessorV2Conv,
@@ -39,6 +40,7 @@ def save_preprocessor_models(preprocessors_dir: Path, version: str) -> None:
         "kaldi_conv.onnx": kaldi.KaldiPreprocessorFastConv,
         "nemo80_conv.onnx": nemo.NemoPreprocessor80Conv,
         "nemo128_conv.onnx": nemo.NemoPreprocessor128Conv,
+        "nemo128_raw_conv.onnx": nemo.NemoPreprocessor128RawConv,
         "whisper80_conv.onnx": whisper.WhisperPreprocessor80Conv,
         "whisper128_conv.onnx": whisper.WhisperPreprocessor128Conv,
     }
@@ -67,6 +69,7 @@ def save_fbanks(preprocessors_dir: Path) -> None:
         "wespeaker": kaldi.wespeaker_mel_banks,
         "nemo80": nemo.melscale_fbanks80,
         "nemo128": nemo.melscale_fbanks128,
+        "nemo128_raw": nemo.melscale_fbanks128,
         "whisper80": whisper.melscale_fbanks80,
         "whisper128": whisper.melscale_fbanks128,
     }

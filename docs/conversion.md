@@ -306,7 +306,7 @@ first time its language is used, and stays in the local cache.
 To pay the download cost up front for a known set of languages:
 
 ```py
-model = onnx_asr.load_model("wav2vec2-adapters", "OpenVoiceOS/mms-1b-all-onnx")
+model = onnx_asr.load_model("OpenVoiceOS/mms-1b-all-onnx")  # model type from config.json
 model.asr.preload("swh", "yor", "pt")
 ```
 

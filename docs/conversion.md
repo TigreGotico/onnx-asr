@@ -617,3 +617,63 @@ Limitations:
 * The runtime processes one waveform at a time, so a batch is a loop.
 * Greedy decoding only, and no timestamps.
 * Transcription only. The model card lists en, fr, de, es and pt.
+
+## Meta Omnilingual ASR CTC
+
+[Omnilingual ASR](https://github.com/facebookresearch/omnilingual-asr) is a wav2vec2
+encoder with a CTC head that Meta released under Apache-2.0 for more than 1600
+languages. For many of them it is the first available speech recognition model.
+
+The graph needs no conversion work here: the
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) project publishes exports that
+already match the contract of this package.
+
+Graph contract:
+
+| Item | Value |
+|---|---|
+| Input | `x`, float32, `[batch, num_samples]`, raw 16 kHz waveform |
+| Output | `logits`, float32, `[batch, num_frames, vocab_size]`, unnormalized |
+| Preprocessor | `identity` — the convolutional feature extractor is in the graph |
+| Subsampling factor | 320 (one frame per 20 ms) |
+| Vocabulary | `tokens.txt`, one shared vocabulary for every language |
+| Blank | index 0, the `<s>` token |
+| Language selection | none — the CTC models are not language-conditioned |
+
+The vocabulary holds real spaces, not the `▁` marker, so a line of `tokens.txt` can
+be a space followed by its index. The reader splits from the right, and the decoder
+joins the tokens without substitution.
+
+Write `config.json` next to the model:
+
+```json
+{
+    "model_type": "omnilingual-ctc",
+    "subsampling_factor": 320
+}
+```
+
+If the export keeps its weights in a separate file, rename that file to
+`model.onnx.data` and patch the `location` field of every external tensor, so the
+resolver downloads it with the graph:
+
+```py
+import onnx
+
+model = onnx.load("model.onnx", load_external_data=False)
+for tensor in model.graph.initializer:
+    for entry in tensor.external_data:
+        if entry.key == "location":
+            entry.value = "model.onnx.data"
+onnx.save(model, "out/model.onnx")
+```
+
+An export of `omniASR_CTC_1B_v2` is at
+[OpenVoiceOS/omnilingual-asr-ctc-1b-onnx](https://huggingface.co/OpenVoiceOS/omnilingual-asr-ctc-1b-onnx).
+
+Limitations:
+
+* The graph takes no length input, so a padded batch decodes its tail from the
+  padding. The frame count trims the result, but one waveform at a time is safer.
+* Upstream accepts audio shorter than 40 seconds. Use a VAD for longer audio.
+* The models write no punctuation and no capitalization for most languages.

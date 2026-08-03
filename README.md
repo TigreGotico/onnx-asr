@@ -78,6 +78,7 @@ The package supports the following modern ASR model architectures. See [supporte
 * Kaldi Icefall Zipformer (with a stateless RNN-T decoder), including Alpha Cephei Vosk 0.52+
 * T-Tech T-one (with a CTC decoder; streaming is not yet supported)
 * HuggingFace Wav2Vec2 (with a CTC decoder)
+* HuggingFace Wav2Vec2 with per-language adapters — one shared base plus a small pack per language, for example Meta MMS-1B-all (`wav2vec2-adapters`, pass `language=` to `recognize`)
 * OpenAI Whisper
 * Speech-LLM: audio encoder + projector + causal LM with a KV cache (for example Qwen3-ASR)
 

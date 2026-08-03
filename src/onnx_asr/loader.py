@@ -15,6 +15,7 @@ from onnx_asr.models.granite_nar import GraniteNar
 from onnx_asr.models.kaldi import KaldiTransducer
 from onnx_asr.models.nemo import NemoConformerAED, NemoConformerCtc, NemoConformerRnnt, NemoConformerTdt
 from onnx_asr.models.pyannote import PyAnnoteVad
+from onnx_asr.models.sensevoice import SenseVoice
 from onnx_asr.models.silero import SileroVad
 from onnx_asr.models.speech_llm import SpeechLlm
 from onnx_asr.models.tone import TOneCtc
@@ -70,6 +71,7 @@ AsrTypeNames = Literal[
     "nemo-conformer-rnnt",
     "nemo-conformer-tdt",
     "nemo-conformer-aed",
+    "sensevoice",
     "speech-llm",
     "t-one-ctc",
     "vosk",
@@ -95,6 +97,7 @@ AsrTypes: TypeAlias = (
     | NemoConformerCtc
     | NemoConformerRnnt
     | NemoConformerAED
+    | SenseVoice
     | SpeechLlm
     | TOneCtc
     | Wav2Vec2Ctc
@@ -132,6 +135,7 @@ def create_asr_resolver(
         "nemo-conformer-rnnt": NemoConformerRnnt,
         "nemo-conformer-tdt": NemoConformerTdt,
         "nemo-conformer-aed": NemoConformerAED,
+        "sensevoice": SenseVoice,
         "speech-llm": SpeechLlm,
         "t-one-ctc": TOneCtc,
         "vosk": KaldiTransducer,
@@ -350,6 +354,7 @@ def load_model(
                 GigaAM Multilingual (`gigaam-multilingual-ctc` | `gigaam-multilingual-large-ctc`)
                 ESPnet E-Branchformer (`espnet-ctc` | `espnet-aed`)
                 Granite Speech NAR, CTC encoder + bidirectional editor (`granite-nar`)
+                SenseVoice, FunASR non-autoregressive CTC with rich tokens (`sensevoice`)
                 Kaldi Transducer (`kaldi-rnnt`)
                 NeMo Conformer (`nemo-conformer-ctc` | `nemo-conformer-rnnt` | `nemo-conformer-tdt` |
                                 `nemo-conformer-aed`)

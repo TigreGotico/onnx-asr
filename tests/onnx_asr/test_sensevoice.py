@@ -79,8 +79,12 @@ def _make_model(path: Path) -> None:
     onnx.save(model, str(path))
 
 
+SEEN_WAVEFORMS: list[np.ndarray] = []
+
+
 def _identity_preprocessor(_name: str):
     def preprocessor(waveforms, waveforms_lens):
+        SEEN_WAVEFORMS.append(waveforms)
         features = np.zeros((waveforms.shape[0], 20, 80), dtype=np.float32)
         return features, waveforms_lens
 
@@ -112,6 +116,17 @@ def model(tmp_path: Path) -> SenseVoice:
         "config": tmp_path / "config.json",
     }
     return SenseVoice(files, _identity_preprocessor, {})
+
+
+def test_the_waveform_is_scaled_to_the_int16_range_before_the_fbank(model: SenseVoice) -> None:
+    # FunASR takes the fbank of an int16 scaled waveform. The log floor and the CMVN
+    # baked into the graph both assume that scale, so a unit-scale waveform is wrong.
+    SEEN_WAVEFORMS.clear()
+    waveform = np.full((1, 16_000), 0.5, dtype=np.float32)
+    list(model.recognize_batch(waveform, np.array([16_000], dtype=np.int64)))
+    assert len(SEEN_WAVEFORMS) == 1
+    assert SEEN_WAVEFORMS[0].dtype == np.float32
+    np.testing.assert_allclose(SEEN_WAVEFORMS[0], 0.5 * 32768.0)
 
 
 def _recognize(model: SenseVoice, **kwargs: object):

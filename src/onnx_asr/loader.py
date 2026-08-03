@@ -293,8 +293,11 @@ class Manager:
             config = update_onnx_providers(
                 self.default_onnx_config, excluded_providers=resolver.model_type._get_excluded_providers()
             )
+        fetcher = {"fetcher": resolver.fetch} if resolver.model_type._supports_fetcher else {}
         return self._create_asr_adapter(
-            resolver.model_type(resolver.resolve_model(quantization=quantization), self._create_preprocessor, config)
+            resolver.model_type(
+                resolver.resolve_model(quantization=quantization), self._create_preprocessor, config, **fetcher
+            )
         )
 
     def create_vad(

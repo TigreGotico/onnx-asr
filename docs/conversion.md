@@ -221,9 +221,8 @@ forward arguments, so the tracer sees them as graph inputs. The stateless API
 module:
 
 ```py
-import numpy as np
 import torch
-from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
+from transformers import Wav2Vec2ForCTC
 
 model = Wav2Vec2ForCTC.from_pretrained("facebook/mms-1b-all", target_lang="eng",
                                        ignore_mismatched_sizes=True).eval()

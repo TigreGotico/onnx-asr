@@ -205,3 +205,9 @@ def test_padded_vocab_is_trimmed(model_dir: Path) -> None:
     )
     model = onnx_asr.load_model("wav2vec2-adapters", model_dir)
     assert model.recognize(_waveform(), sample_rate=16_000, language="yy") == "c"
+
+
+def test_omitting_language_returns_to_the_default(model: onnx_asr.adapters.TextResultsAsrAdapter) -> None:
+    """A previous call must not decide the language of the next one."""
+    model.recognize(_waveform(), sample_rate=16_000, language="yy")
+    assert model.recognize(_waveform(), sample_rate=16_000) == "a"

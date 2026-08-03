@@ -87,13 +87,14 @@ class Wav2Vec2Adapters(_AsrWithCtcDecoding):
         }
         self._aliases = self.config.get("language_aliases", {})
         self._packs: dict[str, _LanguagePack] = {}
-        self._pack: _LanguagePack | None = None
+        self._default: _LanguagePack | None = None
 
         default_language = self.config.get("default_language")
         if default_language is None and len(self._adapter_files) == 1:
             default_language = next(iter(self._adapter_files))
         if default_language is not None:
-            self._pack = self._load_pack(self._resolve_language(default_language))
+            self._default = self._load_pack(self._resolve_language(default_language))
+        self._pack = self._default
 
     @staticmethod
     def _get_model_files(quantization: str | None = None) -> dict[str, str]:
@@ -189,9 +190,15 @@ class Wav2Vec2Adapters(_AsrWithCtcDecoding):
     def recognize_batch(
         self, waveforms: npt.NDArray[np.float32], waveforms_len: npt.NDArray[np.int64], /, **kwargs: object | None
     ) -> Iterator[TimestampedResult]:
-        """Recognize a batch of waveforms in the language given by `language`."""
+        """Recognize a batch of waveforms in the language given by `language`.
+
+        Without `language`, the model falls back to `default_language`. The choice
+        never carries over to the next call.
+        """
         language = kwargs.pop("language", None)
-        if language is not None:
+        if language is None:
+            self._pack = self._default
+        else:
             assert isinstance(language, str)
             self._pack = self._load_pack(self._resolve_language(language))
         self._active_pack()

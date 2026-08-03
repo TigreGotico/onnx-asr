@@ -15,6 +15,7 @@ from onnx_asr.loader import (
     create_vad_resolver,
 )
 from onnx_asr.models.kaldi import KaldiTransducer
+from onnx_asr.models.moonshine import Moonshine
 from onnx_asr.models.nemo import NemoConformerAED
 from onnx_asr.models.tone import TOneCtc
 from onnx_asr.models.wespeaker import WespeakerEmbeddings
@@ -56,6 +57,7 @@ def test_model_names_with_path(model: AsrNames, tmp_path: Path) -> None:
         ("alphacep/vosk-model-small-ru", KaldiTransducer),
         ("t-tech/t-one", TOneCtc),
         ("onnx-community/whisper-tiny", WhisperHf),
+        ("onnx-community/moonshine-tiny-ONNX", Moonshine),
         ("istupakov/canary-180m-flash-onnx", NemoConformerAED),
     ],
 )

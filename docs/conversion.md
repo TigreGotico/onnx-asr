@@ -390,3 +390,55 @@ release. `inesc-id/EBranch-w2vBERT2-EP`, for example, sets `use_rope: true` and
 `pos_enc_layer_type: ''`, which no public ESPnet accepts. Check that the checkpoint loads
 with `strict=True` before you export; if keys such as `attn.use_rope.freqs` are reported
 as unexpected, the model needs code that the release does not have.
+## Granite Speech NAR (CTC encoder + bidirectional editor)
+
+`ibm-granite/granite-speech-4.1-2b-nar` does not decode token by token. A conformer
+encoder with a BPE CTC head writes a first-pass hypothesis, and a bidirectional
+Granite language model rewrites that hypothesis in **one** forward pass. There is no
+KV cache and no loop, so the export has two graphs:
+
+| File | Inputs | Outputs |
+| --- | --- | --- |
+| `encoder.onnx` | `input_features` `(1, N)` raw 16 kHz waveform | `audio_embeds` `(1, L, hidden)`, `ctc_logits` `(1, C, vocab)`, `audio_embeds_lens` `(1,)`, `ctc_lens` `(1,)` |
+| `editor.onnx` | `audio_embeds` `(1, L, hidden)`, `text_ids` `(1, T)` | `logits` `(1, T, vocab)` |
+
+`encoder.onnx` holds the whole audio path: feature extraction, the conformer, the
+CTC head and the Q-Former projector. It takes the raw waveform, so `config.json`
+declares `"preprocessor": "identity"`.
+
+`editor.onnx` holds the token embedding table, which is tied to the output head, so
+its text input is token ids and not embeddings. The attention is bidirectional and
+the runtime never pads, so the graph needs no attention mask.
+
+Between the two graphs the runtime does three things in NumPy:
+
+1. **CTC greedy collapse** of `ctc_logits`: argmax, merge repeated ids, then drop
+   the blanks. Merging before dropping is what lets a doubled letter survive.
+2. **Slot insertion**: put a blank before, after and between every surviving token,
+   so `[a, b]` becomes `[_, a, _, b, _]`, padded up to `min_edit_sequence_length`.
+   Each blank is a slot the editor may fill, and each hypothesis token is a slot the
+   editor may keep or delete.
+3. **A second CTC collapse** over the editor logits, then byte-level BPE decoding.
+
+Add a `config.json`:
+
+```json
+{
+    "model_type": "granite-nar",
+    "preprocessor": "identity",
+    "blank_token_id": 100257,
+    "min_edit_sequence_length": 8
+}
+```
+
+For detokenization, save the tokenizer vocabulary as `vocab.json` (a `{token: id}`
+map), decoded with the standard GPT-2 byte table, the same way as for Whisper.
+
+An export of `ibm-granite/granite-speech-4.1-2b-nar` is at
+[OpenVoiceOS/granite-speech-4.1-2b-nar-onnx](https://huggingface.co/OpenVoiceOS/granite-speech-4.1-2b-nar-onnx).
+
+Limitations:
+
+* The runtime processes one waveform at a time, so a batch is a loop.
+* Greedy decoding only, and no timestamps.
+* Transcription only. The model card lists en, fr, de, es and pt.

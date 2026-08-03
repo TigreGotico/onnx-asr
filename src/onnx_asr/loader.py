@@ -11,6 +11,7 @@ from onnx_asr.adapters import SeAdapter, TextResultsAsrAdapter
 from onnx_asr.asr import Asr, Preprocessor
 from onnx_asr.models.espnet import EspnetAED, EspnetCtc
 from onnx_asr.models.gigaam import GigaamMultilingualCtc, GigaamV2Ctc, GigaamV2Rnnt, GigaamV3E2eCtc, GigaamV3E2eRnnt
+from onnx_asr.models.granite_nar import GraniteNar
 from onnx_asr.models.kaldi import KaldiTransducer
 from onnx_asr.models.nemo import NemoConformerAED, NemoConformerCtc, NemoConformerRnnt, NemoConformerTdt
 from onnx_asr.models.pyannote import PyAnnoteVad
@@ -63,6 +64,7 @@ AsrNames = Literal[
 AsrTypeNames = Literal[
     "espnet-aed",
     "espnet-ctc",
+    "granite-nar",
     "kaldi-rnnt",
     "nemo-conformer-ctc",
     "nemo-conformer-rnnt",
@@ -88,6 +90,7 @@ AsrTypes: TypeAlias = (
     | EspnetCtc
     | GigaamV2Ctc
     | GigaamV2Rnnt
+    | GraniteNar
     | KaldiTransducer
     | NemoConformerCtc
     | NemoConformerRnnt
@@ -123,6 +126,7 @@ def create_asr_resolver(
         "whisper-base": WhisperOrt,
         "espnet-aed": EspnetAED,
         "espnet-ctc": EspnetCtc,
+        "granite-nar": GraniteNar,
         "kaldi-rnnt": KaldiTransducer,
         "nemo-conformer-ctc": NemoConformerCtc,
         "nemo-conformer-rnnt": NemoConformerRnnt,
@@ -345,6 +349,7 @@ def load_model(
                            `gigaam-v3-e2e-ctc` | `gigaam-v3-e2e-rnnt`)
                 GigaAM Multilingual (`gigaam-multilingual-ctc` | `gigaam-multilingual-large-ctc`)
                 ESPnet E-Branchformer (`espnet-ctc` | `espnet-aed`)
+                Granite Speech NAR, CTC encoder + bidirectional editor (`granite-nar`)
                 Kaldi Transducer (`kaldi-rnnt`)
                 NeMo Conformer (`nemo-conformer-ctc` | `nemo-conformer-rnnt` | `nemo-conformer-tdt` |
                                 `nemo-conformer-aed`)

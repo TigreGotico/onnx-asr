@@ -79,10 +79,11 @@ The package supports the following modern ASR model architectures. See [supporte
 * T-Tech T-one (with a CTC decoder; streaming is not yet supported)
 * HuggingFace Wav2Vec2 (with a CTC decoder)
 * OpenAI Whisper
+* Useful Sensors Moonshine (English only)
 
 When these models are saved in ONNX format, typically only the encoder and decoder are included. Running them requires the corresponding preprocessing and decoding implementations. This package provides both for all supported models:
 
-* Log-mel spectrogram preprocessors
+* Log-mel spectrogram preprocessors (Moonshine reads the raw waveform and needs none)
 * Greedy search decoding
 
 ## Community Models

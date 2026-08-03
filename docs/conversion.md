@@ -204,7 +204,7 @@ vocabs/<iso>.txt      onnx-asr vocabulary for that language
 | `wav2vec2.encoder.layers.<i>.adapter_layer.linear_1.bias` | `[adapter_dim]` | |
 | `wav2vec2.encoder.layers.<i>.adapter_layer.linear_2.weight` | `[hidden, adapter_dim]` | |
 | `wav2vec2.encoder.layers.<i>.adapter_layer.linear_2.bias` | `[hidden]` | |
-| `lm_head.weight` | `[hidden, vocab]` | `vocab` is a dynamic dimension |
+| `lm_head.weight` | `[vocab, hidden]` | `vocab` is a dynamic dimension |
 | `lm_head.bias` | `[vocab]` | |
 
 The only output is `logprobs` with shape `[batch, frames, vocab]`.
@@ -215,8 +215,10 @@ with a padded head still decodes correctly.
 
 ### Export
 
-The export script substitutes the language tensors with `torch.func.functional_call`,
-so they become traced graph inputs:
+Detach the language-dependent parameters from the modules and set them from the
+forward arguments, so the tracer sees them as graph inputs. The stateless API
+(`torch.func.functional_call`) does not work here, because the exporter traces the
+module:
 
 ```py
 import numpy as np
@@ -229,14 +231,26 @@ keys = sorted(n for n, _ in model.named_parameters() if ".adapter_layer." in n)
 keys += ["lm_head.weight", "lm_head.bias"]
 
 
+state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+model.requires_grad_(False)
+
+slots = []
+for key in keys:
+    parent = model.get_submodule(key.rsplit(".", 1)[0])
+    leaf = key.rsplit(".", 1)[1]
+    del parent._parameters[leaf]
+    setattr(parent, leaf, None)
+    slots.append((parent, leaf))
+
+
 class AdapterFed(torch.nn.Module):
     def forward(self, input_values, input_lengths, *tensors):
-        overrides = dict(zip(keys, tensors, strict=True))
-        logits = torch.func.functional_call(model, overrides, (input_values,)).logits
+        for (parent, leaf), value in zip(slots, tensors, strict=True):
+            setattr(parent, leaf, value)
+        logits = model(input_values).logits
         return torch.nn.functional.log_softmax(logits, dim=-1)
 
 
-state = model.state_dict()
 tensors = tuple(state[k] for k in keys)
 torch.onnx.export(
     AdapterFed(),
@@ -248,7 +262,7 @@ torch.onnx.export(
         "input_values": {0: "batch", 1: "time"},
         "input_lengths": {0: "batch"},
         "logprobs": {0: "batch", 1: "frames", 2: "vocab"},
-        "lm_head.weight": {1: "vocab"},
+        "lm_head.weight": {0: "vocab"},
         "lm_head.bias": {0: "vocab"},
     },
     opset_version=18,

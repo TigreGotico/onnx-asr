@@ -319,3 +319,61 @@ release. `inesc-id/EBranch-w2vBERT2-EP`, for example, sets `use_rope: true` and
 `pos_enc_layer_type: ''`, which no public ESPnet accepts. Check that the checkpoint loads
 with `strict=True` before you export; if keys such as `attn.use_rope.freqs` are reported
 as unexpected, the model needs code that the release does not have.
+
+### Prompted decoding (OWSM style)
+
+By default `espnet-aed` starts decoding from `<sos/eos>` and stops at `<sos/eos>`. Models
+of the OWSM family, such as `DataoceanAI/dolphin-small`, start from `<sos>`, stop at
+`<eos>` and put a task prompt in between. Four keys in `config.json` describe that:
+
+```json
+{
+    "sos_token": "<sos>",
+    "eos_token": "<eos>",
+    "prompt_tokens": ["{language}", "{region}", "<asr>", "<notimestamp>"],
+    "languages": ["zh-CN", "zh-TW", "ja-JP"],
+    "language_aliases": { "zh": "zh-CN", "ja": "ja-JP" },
+    "default_language": "zh-CN"
+}
+```
+
+`prompt_tokens` holds one entry per decode step after the start token. An entry is a
+vocabulary token, which the runtime forces, or one of the placeholders `{language}` and
+`{region}`, which `recognize(..., language=...)` fills in. `language` accepts a full tag
+(`zh-CN`), the same tag with an underscore (`zh_CN`) or a bare language (`zh`), which
+`language_aliases` maps to a full tag. A placeholder with nothing to fill it in stays
+free and the model predicts that slot itself, the same way the Dolphin code predicts the
+language and the region when the caller gives neither. The prompt tokens never reach the
+transcript.
+
+Leave all four keys out and the model decodes `<sos/eos>` to `<sos/eos>` as before.
+
+### ESPnet `default` frontend in the graph
+
+`DataoceanAI/dolphin-small` uses the ESPnet `default` frontend (STFT 512/400/160 plus 80
+log-mel) and `global_mvn`, which no onnx-asr preprocessor computes. Put the frontend in
+the encoder graph, take the waveform as `features` and declare
+`"preprocessor": "identity"`.
+
+`torch.stft` does not convert, so build the STFT as a strided `conv1d` over a DFT basis
+windowed by the same padded Hann window that `torch.stft` builds internally: pad the
+waveform by `n_fft // 2` on both sides in `reflect` mode, then convolve with a
+`(2 * (n_fft // 2 + 1), 1, n_fft)` kernel of windowed cosines and negated sines, stride
+`hop_length`. The power spectrum is the sum of the squares of the two halves. The rest
+(librosa mel matrix, `clamp(1e-10)`, `log`, masking of the padded frames) converts as
+written. Against the native frontend the largest difference is 2.5e-4 on a log-mel value
+of -21, which is float32 DFT-against-FFT noise in near-silent bins; the largest relative
+difference on the same clip is 1.2e-5.
+
+Do **not** trim the waveform to `features_lens.max()` here. The frame count comes from
+the sample count, and an unbacked symbolic length makes `torch.export` fail on the
+`max_len > 0` guard inside `make_pad_mask`.
+
+Quantize with `op_types_to_quantize=["MatMul"]` and exclude the mel projection of the
+frontend (`nodes_to_exclude=["node_matmul"]`). The STFT `Conv` and the mel `MatMul` run
+over a power spectrum that spans ten orders of magnitude, and int8 weights there destroy
+the features: the model then transcribes every clip as the same short phrase.
+
+An export of `DataoceanAI/dolphin-small` is at
+[OpenVoiceOS/dolphin-small-onnx](https://huggingface.co/OpenVoiceOS/dolphin-small-onnx).
+

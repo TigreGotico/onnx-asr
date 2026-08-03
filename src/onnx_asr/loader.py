@@ -10,6 +10,7 @@ import onnxruntime as rt
 from onnx_asr.adapters import SeAdapter, TextResultsAsrAdapter
 from onnx_asr.asr import Asr, Preprocessor
 from onnx_asr.models.gigaam import GigaamMultilingualCtc, GigaamV2Ctc, GigaamV2Rnnt, GigaamV3E2eCtc, GigaamV3E2eRnnt
+from onnx_asr.models.granite_nar import GraniteNar
 from onnx_asr.models.kaldi import KaldiTransducer
 from onnx_asr.models.nemo import NemoConformerAED, NemoConformerCtc, NemoConformerRnnt, NemoConformerTdt
 from onnx_asr.models.pyannote import PyAnnoteVad
@@ -59,6 +60,7 @@ AsrNames = Literal[
 """Supported ASR model names (can be automatically downloaded from the Hugging Face)."""
 
 AsrTypeNames = Literal[
+    "granite-nar",
     "kaldi-rnnt",
     "nemo-conformer-ctc",
     "nemo-conformer-rnnt",
@@ -82,6 +84,7 @@ VadTypeNames = Literal["pyannote"]
 AsrTypes: TypeAlias = (
     GigaamV2Ctc
     | GigaamV2Rnnt
+    | GraniteNar
     | KaldiTransducer
     | NemoConformerCtc
     | NemoConformerRnnt
@@ -115,6 +118,7 @@ def create_asr_resolver(
         "nemo-parakeet-tdt-0.6b-v3": NemoConformerTdt,
         "nemo-canary-1b-v2": NemoConformerAED,
         "whisper-base": WhisperOrt,
+        "granite-nar": GraniteNar,
         "kaldi-rnnt": KaldiTransducer,
         "nemo-conformer-ctc": NemoConformerCtc,
         "nemo-conformer-rnnt": NemoConformerRnnt,
@@ -333,6 +337,7 @@ def load_model(
                 GigaAM v3 (`gigaam-v3-ctc` | `gigaam-v3-rnnt` |
                            `gigaam-v3-e2e-ctc` | `gigaam-v3-e2e-rnnt`)
                 GigaAM Multilingual (`gigaam-multilingual-ctc` | `gigaam-multilingual-large-ctc`)
+                Granite Speech NAR, CTC encoder + bidirectional editor (`granite-nar`)
                 Kaldi Transducer (`kaldi-rnnt`)
                 NeMo Conformer (`nemo-conformer-ctc` | `nemo-conformer-rnnt` | `nemo-conformer-tdt` |
                                 `nemo-conformer-aed`)

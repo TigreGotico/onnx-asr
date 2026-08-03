@@ -96,9 +96,7 @@ class GraniteNar(BaseAsr):
         assert is_float32_array(ctc_logits)
         return audio_embeds, ctc_logits
 
-    def _edit(
-        self, audio_embeds: npt.NDArray[np.float32], text_ids: npt.NDArray[np.int64]
-    ) -> npt.NDArray[np.float32]:
+    def _edit(self, audio_embeds: npt.NDArray[np.float32], text_ids: npt.NDArray[np.int64]) -> npt.NDArray[np.float32]:
         (logits,) = self._editor.run(["logits"], {"audio_embeds": audio_embeds, "text_ids": text_ids[None]})
         assert is_float32_array(logits)
         return logits

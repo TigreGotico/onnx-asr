@@ -20,6 +20,7 @@ from onnx_asr.models.silero import SileroVad
 from onnx_asr.models.speech_llm import SpeechLlm
 from onnx_asr.models.tone import TOneCtc
 from onnx_asr.models.wav2vec2 import Wav2Vec2Ctc
+from onnx_asr.models.wav2vec2_adapters import Wav2Vec2Adapters
 from onnx_asr.models.wespeaker import WespeakerEmbeddings
 from onnx_asr.models.whisper import WhisperHf, WhisperOrt
 from onnx_asr.onnx import OnnxSessionOptions, Provider, TensorRtOptions, get_onnx_providers, update_onnx_providers
@@ -75,6 +76,7 @@ AsrTypeNames = Literal[
     "speech-llm",
     "t-one-ctc",
     "vosk",
+    "wav2vec2-adapters",
     "wav2vec2-ctc",
     "whisper-ort",
     "whisper",
@@ -101,6 +103,7 @@ AsrTypes: TypeAlias = (
     | SpeechLlm
     | TOneCtc
     | Wav2Vec2Ctc
+    | Wav2Vec2Adapters
     | WhisperHf
     | WhisperOrt
 )
@@ -139,6 +142,7 @@ def create_asr_resolver(
         "speech-llm": SpeechLlm,
         "t-one-ctc": TOneCtc,
         "vosk": KaldiTransducer,
+        "wav2vec2-adapters": Wav2Vec2Adapters,
         "wav2vec2-ctc": Wav2Vec2Ctc,
         "whisper-ort": WhisperOrt,
         "whisper": WhisperHf,

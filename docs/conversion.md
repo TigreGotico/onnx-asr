@@ -175,6 +175,121 @@ word-delimiter token (`|`) becomes `▁`, which onnx-asr converts to a literal s
 when decoding. `subsampling_factor` is the product of the feature-encoder conv strides
 (320 for the standard wav2vec2/XLS-R conv stack) and is only used to scale token
 timestamps.
+## HuggingFace Wav2Vec2 with per-language adapters
+
+`facebook/mms-1b-all` is one 1B-parameter base with a small attention adapter and a
+CTC head per language, for more than a thousand languages. A merged export per
+language costs 3.6 GB every time. The `wav2vec2-adapters` model type keeps the base
+shared: the adapter layers and the CTC head are **graph inputs**, not initializers,
+so one session serves every language and a language costs only its pack.
+
+### Model layout
+
+```text
+model.onnx            shared base, language tensors exposed as inputs
+config.json           {"model_type": "wav2vec2-adapters", ...}
+adapters/<iso>.npz    one array per language-dependent graph input, plus vocab_size
+vocabs/<iso>.txt      onnx-asr vocabulary for that language
+```
+
+### Graph contract
+
+| Input | Shape | Note |
+| --- | --- | --- |
+| `input_values` | `[batch, time]` | raw waveform, 16 kHz |
+| `input_lengths` | `[batch]` | sample count per item |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.norm.weight` | `[hidden]` | one set per encoder layer |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.norm.bias` | `[hidden]` | |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.linear_1.weight` | `[adapter_dim, hidden]` | |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.linear_1.bias` | `[adapter_dim]` | |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.linear_2.weight` | `[hidden, adapter_dim]` | |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.linear_2.bias` | `[hidden]` | |
+| `lm_head.weight` | `[vocab, hidden]` | `vocab` is a dynamic dimension |
+| `lm_head.bias` | `[vocab]` | |
+
+The only output is `logprobs` with shape `[batch, frames, vocab]`.
+
+The `.npz` key names must match the graph input names. `vocab_size` is an extra key
+that holds the true vocabulary size; onnx-asr trims the logits to it, so a base graph
+with a padded head still decodes correctly.
+
+### Export
+
+Detach the language-dependent parameters from the modules and set them from the
+forward arguments, so the tracer sees them as graph inputs. The stateless API
+(`torch.func.functional_call`) does not work here, because the exporter traces the
+module:
+
+```py
+import torch
+from transformers import Wav2Vec2ForCTC
+
+model = Wav2Vec2ForCTC.from_pretrained("facebook/mms-1b-all", target_lang="eng",
+                                       ignore_mismatched_sizes=True).eval()
+keys = sorted(n for n, _ in model.named_parameters() if ".adapter_layer." in n)
+keys += ["lm_head.weight", "lm_head.bias"]
+
+
+state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+model.requires_grad_(False)
+
+slots = []
+for key in keys:
+    parent = model.get_submodule(key.rsplit(".", 1)[0])
+    leaf = key.rsplit(".", 1)[1]
+    del parent._parameters[leaf]
+    setattr(parent, leaf, None)
+    slots.append((parent, leaf))
+
+
+class AdapterFed(torch.nn.Module):
+    def forward(self, input_values, input_lengths, *tensors):
+        for (parent, leaf), value in zip(slots, tensors, strict=True):
+            setattr(parent, leaf, value)
+        logits = model(input_values).logits
+        return torch.nn.functional.log_softmax(logits, dim=-1)
+
+
+tensors = tuple(state[k] for k in keys)
+torch.onnx.export(
+    AdapterFed(),
+    (torch.randn(1, 16000), torch.tensor([16000], dtype=torch.int64), *tensors),
+    "model.onnx",
+    input_names=["input_values", "input_lengths", *keys],
+    output_names=["logprobs"],
+    dynamic_axes={
+        "input_values": {0: "batch", 1: "time"},
+        "input_lengths": {0: "batch"},
+        "logprobs": {0: "batch", 1: "frames", 2: "vocab"},
+        "lm_head.weight": {0: "vocab"},
+        "lm_head.bias": {0: "vocab"},
+    },
+    opset_version=18,
+)
+```
+
+Then, for each language, `model.load_adapter(iso)` and save the same keys to
+`adapters/<iso>.npz` with the language's `vocab_size`, and write `vocabs/<iso>.txt`
+in the format described in [Wav2Vec2 CTC](#huggingface-wav2vec2-ctc).
+
+### Usage
+
+```py
+import onnx_asr
+
+model = onnx_asr.load_model("wav2vec2-adapters", "mms-1b-all-onnx")
+print(model.asr.languages)
+print(model.recognize("test.wav", language="lg"))
+```
+
+`language` takes the pack name (`lug`), a BCP-47 tag whose primary subtag is a pack
+name (`lg-UG`), or an alias from `language_aliases` in `config.json`. Without
+`language`, the model uses `default_language`. An unknown language raises an error
+that lists the languages the model has.
+
+Feature normalization is baked into the graph, so the model uses the `identity`
+preprocessor.
+
 ## Speech-LLM (audio encoder + projector + causal LM)
 
 Models in this family transcribe with a causal language model that receives audio

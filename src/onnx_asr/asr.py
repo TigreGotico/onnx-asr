@@ -41,6 +41,9 @@ class AsrConfig(TypedDict, total=False):
     max_sequence_length: int
     default_language: str
     language_aliases: dict[str, str]
+    decoder_start_token_id: int
+    eos_token_id: int
+    max_position_embeddings: int
 
 
 class Preprocessor(Protocol):

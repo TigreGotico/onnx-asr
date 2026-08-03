@@ -69,6 +69,7 @@ class SpeechLlm(BaseAsr):
         self._prefix_ids = config["prompt_prefix_ids"]
         self._suffix_ids = config["prompt_suffix_ids"]
         self._language_prompt_ids: dict[str, list[int]] = config.get("language_prompt_ids", {})
+        self._language_suffix_ids: dict[str, list[int]] = config.get("language_suffix_ids", {})
         self._eos_token_ids = set(config["eos_token_ids"])
         self._text_start_token_id = config.get("text_start_token_id")
         self._max_sequence_length = config.get("max_sequence_length", 512)
@@ -192,12 +193,17 @@ class SpeechLlm(BaseAsr):
         return logits, dict(zip(self._past_names, outputs[1:], strict=True))
 
     def _generate(self, audio_embeds: npt.NDArray[np.float32], language: str | None) -> list[int]:
-        prefix_ids = self._prefix_ids
-        if language:
-            prompts = self._language_prompt_ids
-            prefix_ids = prompts.get(language, prompts.get(language.title(), prefix_ids))
+        def select(prompts: dict[str, list[int]], default: list[int]) -> list[int]:
+            if not language:
+                return default
+            return prompts.get(language, prompts.get(language.title(), default))
 
-        inputs_embeds = np.concatenate([self._embed(prefix_ids), audio_embeds, self._embed(self._suffix_ids)], axis=1)
+        # The language marker sits before the audio for Qwen3-ASR and after it for
+        # Voxtral, so both ends of the prompt can carry a per-language variant.
+        prefix_ids = select(self._language_prompt_ids, self._prefix_ids)
+        suffix_ids = select(self._language_suffix_ids, self._suffix_ids)
+
+        inputs_embeds = np.concatenate([self._embed(prefix_ids), audio_embeds, self._embed(suffix_ids)], axis=1)
         state = self._empty_state()
         past_length = 0
         tokens: list[int] = []

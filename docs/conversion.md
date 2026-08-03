@@ -218,8 +218,10 @@ Add a `config.json`:
 The prompt token ids are encoded at export time with the Hugging Face tokenizer,
 so the package needs no tokenizer at runtime. `prompt_prefix_ids` ends with the
 audio start token and `prompt_suffix_ids` starts with the audio end token; the
-audio embeddings go between them. `language_prompt_ids` is optional and gives one
-prefix per language for the `language` argument. `text_start_token_id` is also
+audio embeddings go between them. `language_prompt_ids` and `language_suffix_ids`
+are optional and give one prefix (or suffix) per language for the `language`
+argument: Qwen3-ASR puts the language marker before the audio, Voxtral puts it
+after. `text_start_token_id` is also
 optional: some models write a preamble before the transcription (Qwen3-ASR
 writes the detected language), and the runtime drops everything up to and
 including that marker token.

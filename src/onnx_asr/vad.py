@@ -33,6 +33,9 @@ class TimestampedSegmentResult(TimestampedResult, SegmentResult):
 class Vad(Protocol):
     """VAD protocol."""
 
+    _supports_fetcher: bool = False
+    """The constructor takes a `fetcher` keyword for on-demand file download."""
+
     def recognize_batch(
         self,
         asr: Asr,

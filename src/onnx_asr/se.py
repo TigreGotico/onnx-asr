@@ -9,6 +9,9 @@ import numpy.typing as npt
 class SpeakerEmbedding(Protocol):
     """Speaker Embedding protocol."""
 
+    _supports_fetcher: bool = False
+    """The constructor takes a `fetcher` keyword for on-demand file download."""
+
     @staticmethod
     def _get_sample_rate() -> Literal[8_000, 16_000]:
         return 16_000

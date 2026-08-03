@@ -11,6 +11,7 @@ from onnx_asr.adapters import SeAdapter, TextResultsAsrAdapter
 from onnx_asr.asr import Asr, Preprocessor
 from onnx_asr.models.gigaam import GigaamMultilingualCtc, GigaamV2Ctc, GigaamV2Rnnt, GigaamV3E2eCtc, GigaamV3E2eRnnt
 from onnx_asr.models.kaldi import KaldiTransducer
+from onnx_asr.models.moonshine import Moonshine
 from onnx_asr.models.nemo import NemoConformerAED, NemoConformerCtc, NemoConformerRnnt, NemoConformerTdt
 from onnx_asr.models.pyannote import PyAnnoteVad
 from onnx_asr.models.silero import SileroVad
@@ -54,6 +55,8 @@ AsrNames = Literal[
     "alphacep/vosk-model-small-ru",
     "t-tech/t-one",
     "whisper-base",
+    "moonshine-tiny",
+    "moonshine-base",
 ]
 """Supported ASR model names (can be automatically downloaded from the Hugging Face)."""
 
@@ -63,6 +66,7 @@ AsrTypeNames = Literal[
     "nemo-conformer-rnnt",
     "nemo-conformer-tdt",
     "nemo-conformer-aed",
+    "moonshine",
     "t-one-ctc",
     "vosk",
     "wav2vec2-ctc",
@@ -81,6 +85,7 @@ AsrTypes: TypeAlias = (
     GigaamV2Ctc
     | GigaamV2Rnnt
     | KaldiTransducer
+    | Moonshine
     | NemoConformerCtc
     | NemoConformerRnnt
     | NemoConformerAED
@@ -112,11 +117,14 @@ def create_asr_resolver(
         "nemo-parakeet-tdt-0.6b-v3": NemoConformerTdt,
         "nemo-canary-1b-v2": NemoConformerAED,
         "whisper-base": WhisperOrt,
+        "moonshine-tiny": Moonshine,
+        "moonshine-base": Moonshine,
         "kaldi-rnnt": KaldiTransducer,
         "nemo-conformer-ctc": NemoConformerCtc,
         "nemo-conformer-rnnt": NemoConformerRnnt,
         "nemo-conformer-tdt": NemoConformerTdt,
         "nemo-conformer-aed": NemoConformerAED,
+        "moonshine": Moonshine,
         "t-one-ctc": TOneCtc,
         "vosk": KaldiTransducer,
         "wav2vec2-ctc": Wav2Vec2Ctc,
@@ -338,6 +346,8 @@ def load_model(
                                        `nemo-parakeet-tdt-0.6b-v2`)
                 NeMo Parakeet 0.6B Multilingual (`nemo-parakeet-tdt-0.6b-v3`)
                 NeMo Canary (`nemo-canary-1b-v2`)
+                Moonshine En (`moonshine` | `moonshine-tiny` | `moonshine-base` |
+                              `onnx-community/moonshine-*-ONNX`)
                 T-One (`t-one-ctc` | `t-tech/t-one`)
                 Vosk (`vosk` | `alphacep/vosk-model-ru` | `alphacep/vosk-model-small-ru`)
                 Wav2Vec2 CTC (`wav2vec2-ctc`)

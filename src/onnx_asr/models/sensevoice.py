@@ -61,6 +61,14 @@ class SenseVoice(_AsrWithCtcDecoding):
         self._textnorm: dict[str, int] = config.get("textnorm", {"withitn": 14, "woitn": 15})
         self._default_language = str(config.get("default_language", "auto"))
         self._default_textnorm = str(config.get("default_textnorm", "woitn"))
+        # The FunASR frontend runs the fbank on an int16 scaled waveform. The scale
+        # matters because the log floor and the baked-in CMVN both depend on it.
+        self._waveform_scale = float(config.get("waveform_scale", 1 << 15))
+
+    def _features(
+        self, waveforms: npt.NDArray[np.float32], waveforms_len: npt.NDArray[np.int64]
+    ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.int64]]:
+        return self._preprocessor((waveforms * self._waveform_scale).astype(np.float32), waveforms_len)
 
     @staticmethod
     def _get_model_files(quantization: str | None = None) -> dict[str, str]:
@@ -140,6 +148,6 @@ class SenseVoice(_AsrWithCtcDecoding):
         textnorm = self._lookup(self._textnorm, name, "textnorm mode")
 
         encoder_out, encoder_out_lens = self._encode_with_prompt(
-            *self._preprocessor(waveforms, waveforms_len), language, textnorm
+            *self._features(waveforms, waveforms_len), language, textnorm
         )
         return map(self._decode_tokens, *zip(*self._decoding(encoder_out, encoder_out_lens, **kwargs), strict=False))

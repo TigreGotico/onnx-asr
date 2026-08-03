@@ -221,6 +221,7 @@ API reference: [onnx_asr.load_model][], [recognize][onnx_asr.adapters.AsrAdapter
 * `nemo-conformer-aed` for NeMo Canary with Transformer decoder
 * `moonshine` for Useful Sensors Moonshine (exported with optimum or transformers.js)
 * `omnilingual-ctc` for Meta Omnilingual ASR CTC, one shared vocabulary for 1600+ languages (see [conversion](conversion.md#meta-omnilingual-asr-ctc))
+* `paraformer` for FunASR Paraformer, non-autoregressive SAN-M with a CIF predictor (see [conversion](conversion.md#funasr-paraformer))
 * `t-one-ctc` for T-Tech T-one with CTC decoder
 * `wav2vec2-adapters` for a shared Wav2Vec2 base with per-language adapter packs, such as Meta MMS (see [conversion](conversion.md#huggingface-wav2vec2-with-per-language-adapters))
 * `wav2vec2-ctc` for HuggingFace Wav2Vec2 with CTC decoder (see [conversion](conversion.md#huggingface-wav2vec2-ctc))

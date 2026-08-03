@@ -16,6 +16,7 @@ from onnx_asr.models.kaldi import KaldiTransducer
 from onnx_asr.models.moonshine import Moonshine
 from onnx_asr.models.nemo import NemoConformerAED, NemoConformerCtc, NemoConformerRnnt, NemoConformerTdt
 from onnx_asr.models.omnilingual import OmnilingualCtc
+from onnx_asr.models.paraformer import Paraformer
 from onnx_asr.models.pyannote import PyAnnoteVad
 from onnx_asr.models.sensevoice import SenseVoice
 from onnx_asr.models.silero import SileroVad
@@ -77,6 +78,7 @@ AsrTypeNames = Literal[
     "nemo-conformer-tdt",
     "nemo-conformer-aed",
     "omnilingual-ctc",
+    "paraformer",
     "sensevoice",
     "speech-llm",
     "moonshine",
@@ -107,6 +109,7 @@ AsrTypes: TypeAlias = (
     | NemoConformerRnnt
     | NemoConformerAED
     | OmnilingualCtc
+    | Paraformer
     | SenseVoice
     | SpeechLlm
     | TOneCtc
@@ -149,6 +152,7 @@ def create_asr_resolver(
         "nemo-conformer-tdt": NemoConformerTdt,
         "nemo-conformer-aed": NemoConformerAED,
         "omnilingual-ctc": OmnilingualCtc,
+        "paraformer": Paraformer,
         "sensevoice": SenseVoice,
         "speech-llm": SpeechLlm,
         "moonshine": Moonshine,
@@ -384,6 +388,7 @@ def load_model(
                 NeMo Parakeet 0.6B Multilingual (`nemo-parakeet-tdt-0.6b-v3`)
                 NeMo Canary (`nemo-canary-1b-v2`)
                 Omnilingual ASR CTC, 1600+ languages (`omnilingual-ctc`)
+                Paraformer, FunASR non-autoregressive SAN-M + CIF (`paraformer`)
                 Speech-LLM, audio encoder + projector + causal LM (`speech-llm`)
                 Moonshine En (`moonshine` | `moonshine-tiny` | `moonshine-base` |
                               `onnx-community/moonshine-*-ONNX`)

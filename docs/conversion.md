@@ -782,3 +782,72 @@ Limitations:
   padding. The frame count trims the result, but one waveform at a time is safer.
 * Upstream accepts audio shorter than 40 seconds. Use a VAD for longer audio.
 * The models write no punctuation and no capitalization for most languages.
+
+## FunASR Paraformer
+
+[Paraformer](https://github.com/modelscope/FunASR) is the Alibaba offline
+non-autoregressive recognizer: a SAN-M encoder, a CIF predictor that decides how many
+tokens the utterance has, and a single pass decoder that emits all of them at once.
+There is no decoding loop and no blank symbol, so this is not a CTC model.
+
+The graphs need no conversion work here: the
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) project publishes exports that
+this package uses byte for byte.
+
+Graph contract:
+
+| Item | Value |
+|---|---|
+| Input | `speech`, float32, `[batch, num_frames, 560]`, FunASR frontend output |
+| Input | `speech_lengths`, int32, `[batch]` |
+| Output | `logits`, float32, `[batch, num_tokens, vocab_size]`, unnormalized |
+| Output | `token_num`, int32, `[batch]`, the CIF token count |
+| Preprocessor | `wespeaker` — a plain kaldi fbank of an int16 scaled waveform |
+| Subsampling factor | 6, the LFR hop |
+| Vocabulary | `tokens.txt`, renamed to `vocab.txt` |
+| End of sequence | the `</s>` token |
+
+The 560 dim input is the FunASR `WavFrontend` output: an 80 dim kaldi fbank, then a low
+frame rate stack of 7 frames with a hop of 6, then the `am.mvn` mean variance
+statistics. The `wespeaker` preprocessor already computes the fbank, so the runtime
+adds only the LFR stack and the CMVN, with the statistics in `config.json`.
+
+Two details are easy to get wrong and are quiet when wrong:
+
+* The fbank runs on a waveform scaled to the **int16** range. `log(max(x, eps))` floors
+  low energy mel bins at a different point on a unit scale waveform, and the CMVN
+  cannot absorb the difference.
+* The FunASR LFR **left pads** 3 copies of the first frame and pads the tail with the
+  last frame, giving `ceil(num_frames / 6)` output frames. The sherpa-onnx runtime
+  instead drops the tail. Both decode most audio the same way, but only the first
+  reproduces native FunASR.
+
+Decoding is one argmax per logits row. It stops at `</s>`, and never reads past
+`token_num`, which matters for a batch, where the shorter items are padded up to the
+longest token count.
+
+Take the CMVN statistics from the graph metadata, which is also what `am.mvn` holds,
+and write `config.json` next to the model:
+
+```py
+import json
+
+import onnxruntime as rt
+
+meta = rt.InferenceSession("model.onnx").get_modelmeta().custom_metadata_map
+config = {
+    "model_type": "paraformer",
+    "preprocessor": "wespeaker",
+    "subsampling_factor": 6,
+    "waveform_scale": 1 << 15,
+    "lfr_window_size": int(meta["lfr_window_size"]),
+    "lfr_window_shift": int(meta["lfr_window_shift"]),
+    "neg_mean": [float(v) for v in meta["neg_mean"].split(",")],
+    "inv_stddev": [float(v) for v in meta["inv_stddev"].split(",")],
+}
+with open("config.json", "wt") as f:
+    json.dump(config, f)
+```
+
+The streaming Paraformer models use a different graph with encoder and decoder states
+and need a streaming runtime, so they are out of scope here.

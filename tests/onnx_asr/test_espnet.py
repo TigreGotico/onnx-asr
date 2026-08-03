@@ -1,6 +1,7 @@
 """Tests for the ESPnet model classes with small generated ONNX graphs."""
 
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -8,7 +9,7 @@ import onnx
 import pytest
 from onnx import TensorProto, helper, numpy_helper
 
-from onnx_asr.models.espnet import EspnetAED, EspnetCtc
+from onnx_asr.models.espnet import EspnetAED, EspnetCtc, LanguageNotFoundError, UnknownVocabTokenError
 from onnx_asr.preprocessors.preprocessor import IdentityPreprocessor
 
 VOCAB = ["<blk>", "<unk>", "▁ola", "▁mundo", "s", "▁e", "▁tu", "<sos/eos>"]
@@ -17,10 +18,17 @@ FEATURES_SIZE = 160
 ENCODER_SIZE = 16
 
 
-def write_model_files(path: Path, **files: onnx.ModelProto) -> dict[str, Path]:
-    (path / "vocab.txt").write_text("".join(f"{token} {id}\n" for id, token in enumerate(VOCAB)), encoding="utf-8")
+def write_model_files(
+    path: Path,
+    vocab: list[str] | None = None,
+    config: dict[str, object] | None = None,
+    **files: onnx.ModelProto,
+) -> dict[str, Path]:
+    vocab = VOCAB if vocab is None else vocab
+    (path / "vocab.txt").write_text("".join(f"{token} {id}\n" for id, token in enumerate(vocab)), encoding="utf-8")
     (path / "config.json").write_text(
-        json.dumps({"model_type": "espnet-ctc", "subsampling_factor": 8}), encoding="utf-8"
+        json.dumps(config if config is not None else {"model_type": "espnet-ctc", "subsampling_factor": 8}),
+        encoding="utf-8",
     )
 
     model_files = {"vocab": path / "vocab.txt", "config": path / "config.json"}
@@ -68,7 +76,7 @@ def make_decoder_model(table: np.ndarray) -> onnx.ModelProto:
             helper.make_tensor_value_info("encoder_out", TensorProto.FLOAT, ["b", "t", ENCODER_SIZE]),
             helper.make_tensor_value_info("encoder_out_lens", TensorProto.INT64, ["b"]),
         ],
-        [helper.make_tensor_value_info("logprobs", TensorProto.FLOAT, ["b", "l", VOCAB_SIZE])],
+        [helper.make_tensor_value_info("logprobs", TensorProto.FLOAT, ["b", "l", table.shape[-1]])],
         [numpy_helper.from_array(table, "table")],
     )
     return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
@@ -168,3 +176,120 @@ def test_aed_greedy_decoding_stops_at_max_length(tmp_path: Path) -> None:
     features = np.zeros((1, 4, FEATURES_SIZE), dtype=np.float32)
     (result,) = model.recognize_batch(features, np.array([4], dtype=np.int64))
     assert result.text == "ssss"
+
+
+PROMPT_VOCAB = [
+    "<blk>",
+    "<unk>",
+    "▁ola",
+    "▁mundo",
+    "s",
+    "<asr>",
+    "<notimestamp>",
+    "<zh>",
+    "<CN>",
+    "<pt>",
+    "<PT>",
+    "<sos>",
+    "<eos>",
+]
+PROMPT_CONFIG: dict[str, object] = {
+    "model_type": "espnet-aed",
+    "preprocessor": "identity",
+    "sos_token": "<sos>",
+    "eos_token": "<eos>",
+    "prompt_tokens": ["{language}", "{region}", "<asr>", "<notimestamp>"],
+    "languages": ["zh-CN", "pt-PT"],
+    "language_aliases": {"zh": "zh-CN", "pt": "pt-PT"},
+}
+
+
+def prompt_decoder_table(*, predict_language: bool = False) -> np.ndarray:
+    """Lookup table that only reaches the transcript through the whole prompt.
+
+    Every token that the prompt forces maps to `"s"`, so a decoder that ignored the
+    prompt would emit `"sss..."` instead of the transcript.
+    """
+    index = PROMPT_VOCAB.index
+    table = np.full((len(PROMPT_VOCAB), len(PROMPT_VOCAB)), -10.0, dtype=np.float32)
+    table[:, index("s")] = 0.0
+    if predict_language:
+        table[index("<sos>"), index("<zh>")] = 1.0
+        table[index("<zh>"), index("<CN>")] = 1.0
+    table[index("<notimestamp>"), index("▁ola")] = 1.0
+    table[index("▁ola"), index("▁mundo")] = 1.0
+    table[index("▁mundo"), index("<eos>")] = 1.0
+    return table
+
+
+def prompt_model(tmp_path: Path, table: np.ndarray, **config: object) -> EspnetAED:
+    model_files = write_model_files(
+        tmp_path,
+        vocab=PROMPT_VOCAB,
+        config=PROMPT_CONFIG | config,
+        encoder=make_slice_model("encoder_out", ENCODER_SIZE, "encoder_out_lens"),
+        decoder=make_decoder_model(table),
+    )
+    return EspnetAED(model_files, lambda _: IdentityPreprocessor(), {})
+
+
+def prompt_features() -> tuple[np.ndarray, np.ndarray]:
+    return np.zeros((1, 8, FEATURES_SIZE), dtype=np.float32), np.array([8], dtype=np.int64)
+
+
+def test_aed_prompted_decoding(tmp_path: Path) -> None:
+    model = prompt_model(tmp_path, prompt_decoder_table())
+
+    (result,) = model.recognize_batch(*prompt_features(), language="zh-CN")
+    assert result.text == "ola mundo"
+    assert result.tokens == [" ola", " mundo"]
+
+
+@pytest.mark.parametrize("language", ["zh", "zh-CN", "zh_CN"])
+def test_aed_prompt_accepts_language_forms(tmp_path: Path, language: str) -> None:
+    model = prompt_model(tmp_path, prompt_decoder_table())
+    (result,) = model.recognize_batch(*prompt_features(), language=language)
+    assert result.text == "ola mundo"
+
+
+def test_aed_prompt_uses_default_language(tmp_path: Path) -> None:
+    model = prompt_model(tmp_path, prompt_decoder_table(), default_language="zh-CN")
+    (result,) = model.recognize_batch(*prompt_features())
+    assert result.text == "ola mundo"
+
+
+def test_aed_prompt_builds_expected_token_ids(tmp_path: Path) -> None:
+    model = prompt_model(tmp_path, prompt_decoder_table())
+    index = PROMPT_VOCAB.index
+
+    assert model._prompt("pt") == [index("<pt>"), index("<PT>"), index("<asr>"), index("<notimestamp>")]
+    # No language and no default: the model predicts both slots itself.
+    assert model._prompt(None) == [None, None, index("<asr>"), index("<notimestamp>")]
+    assert model.languages == ["zh-CN", "pt-PT"]
+
+
+def test_aed_prompt_predicts_unfilled_slots(tmp_path: Path) -> None:
+    model = prompt_model(tmp_path, prompt_decoder_table(predict_language=True))
+
+    (result,) = model.recognize_batch(*prompt_features())
+    assert result.text == "ola mundo"
+
+
+def test_aed_unknown_language(tmp_path: Path) -> None:
+    model = prompt_model(tmp_path, prompt_decoder_table())
+    with pytest.raises(LanguageNotFoundError, match="Language 'kl' is not supported"):
+        list(model.recognize_batch(*prompt_features(), language="kl"))
+
+
+def test_aed_unknown_prompt_token(tmp_path: Path) -> None:
+    with pytest.raises(UnknownVocabTokenError, match=re.escape("Token '<translate>' is not in vocab.txt")):
+        prompt_model(tmp_path, prompt_decoder_table(), prompt_tokens=["<translate>"])
+
+
+def test_aed_preprocessor_name_from_config(tmp_path: Path) -> None:
+    assert prompt_model(tmp_path, prompt_decoder_table())._preprocessor_name == "identity"
+
+
+def test_aed_without_prompt_is_unchanged(aed_model: EspnetAED) -> None:
+    assert aed_model._prompt("zh") == []
+    assert aed_model._sos_token_id == aed_model._eos_token_id == VOCAB.index("<sos/eos>")

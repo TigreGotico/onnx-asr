@@ -341,11 +341,20 @@ optional: some models write a preamble before the transcription (Qwen3-ASR
 writes the detected language), and the runtime drops everything up to and
 including that marker token.
 
-Two more optional keys cover the differences between model families:
+Four more optional keys cover the differences between model families:
 
 * `tokenizer_type` is `"byte-level"` (default) or `"sentencepiece"`.
 * `normalize_waveform` scales the waveform to zero mean and unit variance before
   the feature extractor. SLAM-ASR models need this.
+* `trim_features` cuts the 30 s padding of the Whisper preprocessor back to the
+  length of the audio, rounded down to this number of frames. Use it for models
+  whose encoder turns every feature frame into an audio embedding (Audio8
+  ARK-ASR), where the padding would otherwise add hundreds of silent embeddings.
+  The value is the subsampling factor times the embedding merge factor, so 8 for
+  a Whisper encoder (subsampling 2) with a merge of 4 frames.
+* `suppress_token_ids` bans token ids in the greedy loop. Models that keep the
+  special tokens in the softmax and let the decoder ban them (Audio8 ARK-ASR
+  bans all special and added tokens) generate nothing usable without it.
 
 For detokenization, save the tokenizer vocabulary as `vocab.json` (a
 `{token: id}` map). Byte-level BPE tokens are decoded with the standard GPT-2

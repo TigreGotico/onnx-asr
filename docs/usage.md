@@ -35,8 +35,6 @@ API reference: [onnx_asr.load_model][], [recognize][onnx_asr.adapters.AsrAdapter
 * `istupakov/canary-180m-flash-onnx` for Nvidia Canary 180M Flash (multilingual) ([origin](https://huggingface.co/nvidia/canary-180m-flash), [onnx](https://huggingface.co/istupakov/canary-180m-flash-onnx))
 * `istupakov/canary-1b-flash-onnx` for Nvidia Canary 1B Flash (multilingual) ([origin](https://huggingface.co/nvidia/canary-1b-flash), [onnx](https://huggingface.co/istupakov/canary-1b-flash-onnx))
 * `whisper-base` for OpenAI Whisper Base exported with onnxruntime ([origin](https://huggingface.co/openai/whisper-base), [onnx](https://huggingface.co/istupakov/whisper-base-onnx))
-* `moonshine-tiny` for Useful Sensors Moonshine Tiny (en) ([origin](https://huggingface.co/UsefulSensors/moonshine-tiny), [onnx](https://huggingface.co/OpenVoiceOS/moonshine-tiny-onnx))
-* `moonshine-base` for Useful Sensors Moonshine Base (en) ([origin](https://huggingface.co/UsefulSensors/moonshine-base), [onnx](https://huggingface.co/OpenVoiceOS/moonshine-base-onnx))
 * `alphacep/vosk-model-ru` for Alpha Cephei Vosk 0.54-ru ([origin](https://huggingface.co/alphacep/vosk-model-ru))
 * `alphacep/vosk-model-small-ru` for Alpha Cephei Vosk 0.52-small-ru ([origin](https://huggingface.co/alphacep/vosk-model-small-ru))
 * `t-tech/t-one` for T-Tech T-one ([origin](https://huggingface.co/t-tech/T-one))

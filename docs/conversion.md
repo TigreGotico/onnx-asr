@@ -175,3 +175,155 @@ word-delimiter token (`|`) becomes `▁`, which onnx-asr converts to a literal s
 when decoding. `subsampling_factor` is the product of the feature-encoder conv strides
 (320 for the standard wav2vec2/XLS-R conv stack) and is only used to scale token
 timestamps.
+
+## Nvidia NeMo models without feature normalization
+
+The NeMo preprocessor normalizes the log-mel features per utterance. Some checkpoints
+are trained with `normalize: NA` instead, and their encoder expects the raw log-mel.
+Nemotron ASR is one family: the Hugging Face
+`NemotronAsrStreamingFeatureExtractor` of `nvidia/nemotron-3.5-asr-streaming-0.6b`
+computes 128 log-mel bins with `n_fft` 512, `win_length` 400, `hop_length` 160 and
+preemphasis 0.97, and applies no normalization at all. Running such a model through
+the normalizing preprocessor gives a transcript that is wrong but still looks like
+text, so it is worth checking the source feature extractor rather than assuming.
+
+Add `"normalize": false` to `config.json`. onnx-asr then selects the `nemo<size>_raw`
+preprocessor, which is the same log-mel front end with the normalization step removed:
+
+```json
+{
+    "model_type": "nemo-conformer-rnnt",
+    "features_size": 128,
+    "subsampling_factor": 8,
+    "max_tokens_per_step": 10,
+    "normalize": false
+}
+```
+
+Nemotron ASR is a cache-aware streaming FastConformer. Exported for full-utterance
+offline use, the encoder runs over the whole utterance with the chunked-limited
+attention mask baked in at the largest supported lookahead, and the language prompt is
+a frozen one-hot, so the graph needs no streaming caches and no extra inputs:
+
+```py
+import torch
+from torch import nn
+from transformers import AutoProcessor, Nemotron3_5AsrForRNNT
+from transformers.models.nemotron_asr_streaming import modeling_nemotron_asr_streaming as enc_mod
+
+model_id = "nvidia/nemotron-3.5-asr-streaming-0.6b"
+language = "auto"
+num_lookahead_tokens = 13
+
+processor = AutoProcessor.from_pretrained(model_id)
+model = Nemotron3_5AsrForRNNT.from_pretrained(model_id, dtype=torch.float32).eval()
+prompt_id = processor.prompt_dictionary.get(language, model.config.default_prompt_id)
+
+chunk_size = num_lookahead_tokens + 1
+left_chunks = (model.config.encoder_config.sliding_window - 1) // chunk_size
+
+
+def create_bidirectional_mask(config=None, inputs_embeds=None, attention_mask=None, **kwargs):
+    """Traceable replacement for the chunked-limited mask builder.
+
+    `create_bidirectional_mask` builds the mask through `torch.vmap`, which the ONNX
+    exporter cannot trace. The result is exactly the padding mask AND
+    `0 <= q_chunk - kv_chunk <= left_context_chunks`.
+    """
+    batch, seq_len = inputs_embeds.shape[0], inputs_embeds.shape[1]
+    chunk = torch.div(torch.arange(seq_len), chunk_size, rounding_mode="trunc")
+    chunk_diff = chunk[:, None] - chunk[None, :]
+    mask = ((chunk_diff >= 0) & (chunk_diff <= left_chunks))[None, None].expand(batch, 1, seq_len, seq_len)
+    if attention_mask is not None:
+        mask = mask & attention_mask.bool()[:, None, None, :]
+    return mask
+
+
+enc_mod.create_bidirectional_mask = create_bidirectional_mask
+
+
+class Encoder(nn.Module):
+    def forward(self, audio_signal, length):
+        features = audio_signal.transpose(1, 2)
+        attention_mask = (torch.arange(features.shape[1])[None, :] < length[:, None]).long()
+        hidden = model.encoder(
+            input_features=features,
+            attention_mask=attention_mask,
+            num_lookahead_tokens=num_lookahead_tokens,
+            use_cache=False,
+        ).last_hidden_state
+
+        one_hot = torch.zeros(model.config.num_prompts)
+        one_hot[prompt_id] = 1.0
+        one_hot = one_hot[None, None, :].expand(hidden.shape[0], hidden.shape[1], -1)
+
+        outputs = model.encoder_projector(model.prompt_projector(torch.cat([hidden, one_hot], dim=-1)))
+        return outputs.transpose(1, 2), model.encoder._get_subsampling_output_length(length).to(torch.int64)
+
+
+class DecoderJoint(nn.Module):
+    def forward(self, encoder_outputs, targets, target_length, input_states_1, input_states_2):
+        embeddings = model.decoder.embedding(targets.to(torch.long))
+        lstm_out, (h, c) = model.decoder.lstm(embeddings, (input_states_1, input_states_2))
+        dec = model.decoder.decoder_projector(lstm_out)
+        # Keep `target_length` in the graph: onnx-asr always feeds it and onnxruntime
+        # rejects an input the graph does not declare.
+        dec = dec + 0.0 * target_length.to(dec.dtype).view(-1, 1, 1)
+        logits = model.joint(
+            encoder_hidden_states=encoder_outputs.transpose(1, 2)[:, :, None, :],
+            decoder_hidden_states=dec[:, None, :, :],
+        )
+        return logits, h, c
+
+
+torch.onnx.export(
+    Encoder().eval(),
+    (torch.randn(1, model.config.encoder_config.num_mel_bins, 400), torch.tensor([400], dtype=torch.int64)),
+    "encoder-model.onnx",
+    input_names=["audio_signal", "length"],
+    output_names=["outputs", "encoded_lengths"],
+    dynamic_axes={
+        "audio_signal": {0: "batch", 2: "time"},
+        "length": {0: "batch"},
+        "outputs": {0: "batch", 2: "time_out"},
+        "encoded_lengths": {0: "batch"},
+    },
+    opset_version=17,
+    dynamo=False,
+)
+
+states = torch.zeros(model.config.num_decoder_layers, 1, model.config.decoder_hidden_size)
+torch.onnx.export(
+    DecoderJoint().eval(),
+    (
+        torch.randn(1, model.config.decoder_hidden_size, 1),
+        torch.zeros(1, 1, dtype=torch.int32),
+        torch.ones(1, dtype=torch.int32),
+        states,
+        states.clone(),
+    ),
+    "decoder_joint-model.onnx",
+    input_names=["encoder_outputs", "targets", "target_length", "input_states_1", "input_states_2"],
+    output_names=["outputs", "output_states_1", "output_states_2"],
+    dynamic_axes={
+        "encoder_outputs": {0: "batch", 2: "time"},
+        "targets": {0: "batch", 1: "tokens"},
+        "target_length": {0: "batch"},
+        "input_states_1": {1: "batch"},
+        "input_states_2": {1: "batch"},
+        "outputs": {0: "batch", 1: "time", 2: "tokens"},
+        "output_states_1": {1: "batch"},
+        "output_states_2": {1: "batch"},
+    },
+    opset_version=17,
+    dynamo=False,
+)
+
+with open("vocab.txt", "wt") as f:
+    for i in range(model.config.vocab_size):
+        token = processor.tokenizer.convert_ids_to_tokens(i)
+        f.write(f"{'<blk>' if i == model.config.blank_token_id else token} {i}\n")
+```
+
+Compare the patched mask against the original one on a fixed input before you export.
+The replacement must be exact, not close.

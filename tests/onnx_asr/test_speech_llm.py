@@ -2,12 +2,15 @@
 
 import json
 from pathlib import Path
+from typing import cast
 
 import numpy as np
+import numpy.typing as npt
 import onnx
 import pytest
 from onnx import TensorProto, helper, numpy_helper
 
+from onnx_asr.asr import Preprocessor
 from onnx_asr.models.speech_llm import SpeechLlm, _post_cnn_length
 
 HIDDEN = 4
@@ -169,8 +172,8 @@ def _make_decoder(path: Path, prefill_length: int) -> None:
     _save(graph, path)
 
 
-def _fake_preprocessor(_name: str):
-    def preprocessor(waveforms, waveforms_lens):
+def _fake_preprocessor(_name: str) -> Preprocessor:
+    def preprocessor(waveforms: np.ndarray, waveforms_lens: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         frames = np.zeros((waveforms.shape[0], MEL_BINS, 3000), dtype=np.float32)
         return frames, waveforms_lens
 
@@ -326,7 +329,14 @@ def test_slam_layout_recognize(slam_model: SpeechLlm) -> None:
 def test_waveform_normalization_is_applied(slam_model: SpeechLlm) -> None:
     seen: list[np.ndarray] = []
     preprocessor = slam_model._preprocessor
-    slam_model._preprocessor = lambda waveforms, lens: (seen.append(waveforms), preprocessor(waveforms, lens))[1]
+
+    def _tracking_preprocessor(
+        waveforms: npt.NDArray[np.float32], lens: npt.NDArray[np.int64]
+    ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.int64]]:
+        seen.append(waveforms)
+        return preprocessor(waveforms, lens)
+
+    slam_model._preprocessor = cast(Preprocessor, _tracking_preprocessor)
 
     samples = int(AUDIO_SECONDS * 16_000)
     waveforms = np.full((1, samples), 3.0, dtype=np.float32)

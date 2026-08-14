@@ -14,6 +14,7 @@ from onnx_asr.models.kaldi import KaldiTransducer
 from onnx_asr.models.nemo import NemoConformerAED, NemoConformerCtc, NemoConformerRnnt, NemoConformerTdt
 from onnx_asr.models.pyannote import PyAnnoteVad
 from onnx_asr.models.silero import SileroVad
+from onnx_asr.models.speech_llm import SpeechLlm
 from onnx_asr.models.tone import TOneCtc
 from onnx_asr.models.wav2vec2 import Wav2Vec2Ctc
 from onnx_asr.models.wespeaker import WespeakerEmbeddings
@@ -63,6 +64,7 @@ AsrTypeNames = Literal[
     "nemo-conformer-rnnt",
     "nemo-conformer-tdt",
     "nemo-conformer-aed",
+    "speech-llm",
     "t-one-ctc",
     "vosk",
     "wav2vec2-ctc",
@@ -84,6 +86,7 @@ AsrTypes: TypeAlias = (
     | NemoConformerCtc
     | NemoConformerRnnt
     | NemoConformerAED
+    | SpeechLlm
     | TOneCtc
     | Wav2Vec2Ctc
     | WhisperHf
@@ -117,6 +120,7 @@ def create_asr_resolver(
         "nemo-conformer-rnnt": NemoConformerRnnt,
         "nemo-conformer-tdt": NemoConformerTdt,
         "nemo-conformer-aed": NemoConformerAED,
+        "speech-llm": SpeechLlm,
         "t-one-ctc": TOneCtc,
         "vosk": KaldiTransducer,
         "wav2vec2-ctc": Wav2Vec2Ctc,
@@ -338,6 +342,7 @@ def load_model(
                                        `nemo-parakeet-tdt-0.6b-v2`)
                 NeMo Parakeet 0.6B Multilingual (`nemo-parakeet-tdt-0.6b-v3`)
                 NeMo Canary (`nemo-canary-1b-v2`)
+                Speech-LLM, audio encoder + projector + causal LM (`speech-llm`)
                 T-One (`t-one-ctc` | `t-tech/t-one`)
                 Vosk (`vosk` | `alphacep/vosk-model-ru` | `alphacep/vosk-model-small-ru`)
                 Wav2Vec2 CTC (`wav2vec2-ctc`)

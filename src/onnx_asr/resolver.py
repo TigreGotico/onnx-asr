@@ -108,6 +108,8 @@ class Resolver(Generic[T]):
             *files,
             *(file.removeprefix("**/") for file in files if file.startswith("**/")),
         ]
+        # a value that ends with "/" names a directory of model assets
+        files = [file + "**" if file.endswith("/") else file for file in files]
         files = [
             "config.json",
             "config.yaml",
@@ -128,6 +130,12 @@ class Resolver(Generic[T]):
             files |= {"config": "config.json"}
 
         def find(filename: str) -> Path:
+            if filename.endswith("/"):
+                directory = Path(path, filename)
+                if not directory.is_dir():
+                    raise ModelFileNotFoundError(filename, path)
+                return directory
+
             files = list(path.glob(filename))
             if len(files) > 1:
                 raise MoreThanOneModelFileFoundError(filename, path)

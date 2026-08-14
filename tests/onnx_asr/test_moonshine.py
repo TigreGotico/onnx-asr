@@ -12,6 +12,7 @@ from onnx import numpy_helper as nh
 
 import onnx_asr
 from onnx_asr.adapters import TextResultsAsrAdapter
+from onnx_asr.asr import BaseAsr
 from onnx_asr.models.moonshine import Moonshine
 from onnx_asr.preprocessors.preprocessor import IdentityPreprocessor
 
@@ -65,7 +66,7 @@ def _build_decoder(path: Path) -> None:
     The KV cache is shape-only: `present.*` just grows by the current sequence
     length, which is all the runtime cache bookkeeping actually reads.
     """
-    kv_shape = ["batch_size", HEADS, "past_decoder_sequence_length", HEAD_DIM]
+    kv_shape: list[str | int] = ["batch_size", HEADS, "past_decoder_sequence_length", HEAD_DIM]
     inputs = [
         h.make_tensor_value_info("input_ids", TensorProto.INT64, ["batch_size", "decoder_sequence_length"]),
         h.make_tensor_value_info(
@@ -154,7 +155,9 @@ def test_model_type_resolved_from_config(model_dir: Path) -> None:
 
 
 def test_preprocessor_is_identity(model: TextResultsAsrAdapter) -> None:
-    assert isinstance(model.asr._preprocessor, IdentityPreprocessor)
+    asr = model.asr
+    assert isinstance(asr, BaseAsr)
+    assert isinstance(asr._preprocessor, IdentityPreprocessor)
 
 
 def test_recognize_walks_greedy_chain_to_eos(model: TextResultsAsrAdapter) -> None:
@@ -167,7 +170,10 @@ def test_recognize_walks_greedy_chain_to_eos(model: TextResultsAsrAdapter) -> No
 
 def test_recognize_batch_shares_result(model: TextResultsAsrAdapter) -> None:
     rng = np.random.default_rng(0)
-    waveforms = [rng.random(16_000, dtype=np.float32), rng.random(8_000, dtype=np.float32)]
+    waveforms: list[str | Path | np.ndarray] = [
+        rng.random(16_000, dtype=np.float32),
+        rng.random(8_000, dtype=np.float32),
+    ]
 
     results = model.recognize(waveforms)
     assert results == ["hello! w", "hello! w"]

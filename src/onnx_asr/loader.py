@@ -64,11 +64,7 @@ AsrTypeNames = Literal[
     "nemo-conformer-rnnt",
     "nemo-conformer-tdt",
     "nemo-conformer-aed",
-    "omnilingual-ctc",
     "paraformer",
-    "sensevoice",
-    "speech-llm",
-    "moonshine",
     "t-one-ctc",
     "vosk",
     "wav2vec2-ctc",
@@ -125,7 +121,6 @@ def create_asr_resolver(
         "nemo-conformer-tdt": NemoConformerTdt,
         "nemo-conformer-aed": NemoConformerAED,
         "paraformer": Paraformer,
-        "moonshine": Moonshine,
         "t-one-ctc": TOneCtc,
         "vosk": KaldiTransducer,
         "wav2vec2-ctc": Wav2Vec2Ctc,
@@ -347,11 +342,7 @@ def load_model(
                                        `nemo-parakeet-tdt-0.6b-v2`)
                 NeMo Parakeet 0.6B Multilingual (`nemo-parakeet-tdt-0.6b-v3`)
                 NeMo Canary (`nemo-canary-1b-v2`)
-                Omnilingual ASR CTC, 1600+ languages (`omnilingual-ctc`)
                 Paraformer, FunASR non-autoregressive SAN-M + CIF (`paraformer`)
-                Speech-LLM, audio encoder + projector + causal LM (`speech-llm`)
-                Moonshine En (`moonshine` | `moonshine-tiny` | `moonshine-base` |
-                              `onnx-community/moonshine-*-ONNX`)
                 T-One (`t-one-ctc` | `t-tech/t-one`)
                 Vosk (`vosk` | `alphacep/vosk-model-ru` | `alphacep/vosk-model-small-ru`)
                 Wav2Vec2 CTC (`wav2vec2-ctc`)

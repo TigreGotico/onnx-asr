@@ -14,12 +14,15 @@ import pytest
 from onnx import TensorProto, helper
 
 import onnx_asr
+from onnx_asr.asr import FileFetcher, Preprocessor
 from onnx_asr.models.wav2vec2_adapters import (
     LanguageNotFoundError,
     LanguageNotSpecifiedError,
     MissingAdapterInputsError,
     Wav2Vec2Adapters,
 )
+from onnx_asr.resolver import Resolver
+from onnx_asr.utils import ModelFileNotFoundError
 
 HIDDEN = 4
 SUBSAMPLING = 4
@@ -211,3 +214,178 @@ def test_omitting_language_returns_to_the_default(model: onnx_asr.adapters.TextR
     """A previous call must not decide the language of the next one."""
     model.recognize(_waveform(), sample_rate=16_000, language="yy")
     assert model.recognize(_waveform(), sample_rate=16_000) == "a"
+
+
+@pytest.fixture
+def lazy_dir(model_dir: Path, tmp_path: Path) -> tuple[Path, list[str]]:
+    """A model directory with no packs on disk, plus the list of files a fetcher served."""
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    for name in ("adapters", "vocabs"):
+        (model_dir / name).rename(remote / name)
+        (model_dir / name).mkdir()
+
+    config = json.loads((model_dir / "config.json").read_text())
+    config["languages"] = ["xx", "yy"]
+    (model_dir / "config.json").write_text(json.dumps(config))
+    return remote, []
+
+
+def _identity_preprocessor(name: str) -> Preprocessor:  # noqa: ARG001
+    def preprocess(waveforms: np.ndarray, waveforms_lens: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return waveforms, waveforms_lens
+
+    return preprocess
+
+
+def _make_fetcher(model_dir: Path, remote: Path, fetched: list[str]) -> FileFetcher:
+    def fetch(filename: str) -> Path:
+        fetched.append(filename)
+        target = model_dir / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((remote / filename).read_bytes())
+        return target
+
+    return fetch
+
+
+def _lazy_model(model_dir: Path, remote: Path, fetched: list[str]) -> Wav2Vec2Adapters:
+    return Wav2Vec2Adapters(
+        {
+            "model": model_dir / "model.onnx",
+            "adapters": model_dir / "adapters",
+            "vocabs": model_dir / "vocabs",
+            "config": model_dir / "config.json",
+        },
+        _identity_preprocessor,
+        {},
+        fetcher=_make_fetcher(model_dir, remote, fetched),
+    )
+
+
+def test_lazy_directory_is_not_downloaded_whole(monkeypatch: pytest.MonkeyPatch, model_dir: Path) -> None:
+    """`adapters/` and `vocabs/` must not appear in the snapshot patterns."""
+    seen: dict[str, object] = {}
+
+    def snapshot_download(repo_id: str, **kwargs: object) -> str:  # noqa: ARG001
+        seen.update(kwargs)
+        return str(model_dir)
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", snapshot_download)
+    resolver: Resolver[Wav2Vec2Adapters] = Resolver(Wav2Vec2Adapters, "org/repo")
+    resolver._download_model(None, local_files_only=True)
+
+    patterns = seen["allow_patterns"]
+    assert isinstance(patterns, list)
+    assert "model.onnx" in patterns
+    assert not [pattern for pattern in patterns if "adapters" in pattern or "vocabs" in pattern]
+
+
+def test_fetch_downloads_one_file(monkeypatch: pytest.MonkeyPatch, model_dir: Path) -> None:
+    asked: list[str] = []
+
+    def hf_hub_download(repo_id: str, filename: str, **kwargs: object) -> str:  # noqa: ARG001
+        asked.append(filename)
+        return str(model_dir / filename)
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", hf_hub_download)
+    resolver: Resolver[Wav2Vec2Adapters] = Resolver(Wav2Vec2Adapters, "org/repo")
+
+    assert resolver.fetch("adapters/yy.npz") == model_dir / "adapters" / "yy.npz"
+    assert asked == ["adapters/yy.npz"]
+
+
+def test_fetch_uses_the_local_file_when_there_is_one(model_dir: Path) -> None:
+    resolver: Resolver[Wav2Vec2Adapters] = Resolver(Wav2Vec2Adapters, "org/repo", model_dir)
+    assert resolver.fetch("adapters/yy.npz") == model_dir / "adapters" / "yy.npz"
+
+
+def test_languages_come_from_config_when_nothing_is_on_disk(lazy_dir: tuple[Path, list[str]], model_dir: Path) -> None:
+    remote, fetched = lazy_dir
+    asr = _lazy_model(model_dir, remote, fetched)
+    assert asr.languages == ["xx", "yy"]
+
+
+def test_only_the_default_language_is_fetched_at_load(lazy_dir: tuple[Path, list[str]], model_dir: Path) -> None:
+    remote, fetched = lazy_dir
+    _lazy_model(model_dir, remote, fetched)
+    assert fetched == ["adapters/xx.npz", "vocabs/xx.txt"]
+
+
+def test_another_language_is_fetched_on_use(lazy_dir: tuple[Path, list[str]], model_dir: Path) -> None:
+    remote, fetched = lazy_dir
+    asr = _lazy_model(model_dir, remote, fetched)
+    fetched.clear()
+
+    assert next(asr.recognize_batch(_waveform(), np.array([12], dtype=np.int64), language="yy")).text == "b"
+    assert fetched == ["adapters/yy.npz", "vocabs/yy.txt"]
+
+    fetched.clear()
+    next(asr.recognize_batch(_waveform(), np.array([12], dtype=np.int64), language="yy"))
+    assert fetched == []
+
+
+def test_preload_languages_from_config(lazy_dir: tuple[Path, list[str]], model_dir: Path) -> None:
+    remote, fetched = lazy_dir
+    config = json.loads((model_dir / "config.json").read_text())
+    config["preload_languages"] = ["yy"]
+    (model_dir / "config.json").write_text(json.dumps(config))
+
+    _lazy_model(model_dir, remote, fetched)
+    assert fetched == ["adapters/xx.npz", "vocabs/xx.txt", "adapters/yy.npz", "vocabs/yy.txt"]
+
+
+def test_preload_method(lazy_dir: tuple[Path, list[str]], model_dir: Path) -> None:
+    remote, fetched = lazy_dir
+    asr = _lazy_model(model_dir, remote, fetched)
+    fetched.clear()
+    asr.preload("zz")  # alias of yy
+    assert fetched == ["adapters/yy.npz", "vocabs/yy.txt"]
+
+
+def test_unknown_language_is_rejected_before_any_download(lazy_dir: tuple[Path, list[str]], model_dir: Path) -> None:
+    remote, fetched = lazy_dir
+    asr = _lazy_model(model_dir, remote, fetched)
+    fetched.clear()
+    with pytest.raises(LanguageNotFoundError, match="xx, yy"):
+        asr.preload("qq")
+    assert fetched == []
+
+
+def test_no_fetcher_and_no_file_raises(lazy_dir: tuple[Path, list[str]], model_dir: Path) -> None:
+    assert lazy_dir
+    with pytest.raises(ModelFileNotFoundError):
+        Wav2Vec2Adapters(
+            {
+                "model": model_dir / "model.onnx",
+                "adapters": model_dir / "adapters",
+                "vocabs": model_dir / "vocabs",
+                "config": model_dir / "config.json",
+            },
+            _identity_preprocessor,
+            {},
+        )
+
+
+def test_local_directory_needs_no_fetcher(model_dir: Path) -> None:
+    """A full local directory keeps working when nothing can be downloaded."""
+    asr = Wav2Vec2Adapters(
+        {
+            "model": model_dir / "model.onnx",
+            "adapters": model_dir / "adapters",
+            "vocabs": model_dir / "vocabs",
+            "config": model_dir / "config.json",
+        },
+        _identity_preprocessor,
+        {},
+    )
+    assert asr.languages == ["xx", "yy"]
+    assert next(asr.recognize_batch(_waveform(), np.array([12], dtype=np.int64), language="yy")).text == "b"
+
+
+def test_language_list_in_errors_is_short() -> None:
+    languages = [f"l{i:03d}" for i in range(50)]
+    message = str(LanguageNotFoundError("qq", languages))
+    assert "l019" in message
+    assert "l020" not in message
+    assert "30 more" in message

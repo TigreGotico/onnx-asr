@@ -291,6 +291,29 @@ that lists the languages the model has.
 Feature normalization is baked into the graph, so the model uses the `identity`
 preprocessor.
 
+### Downloads: one language at a time
+
+A repository with more than a thousand packs is about 10 GB, so `adapters/` and
+`vocabs/` are **not** downloaded as a whole. From the Hub, `load_model` gets the base
+graph, `config.json` and the pack of `default_language`. Every other pack arrives the
+first time its language is used, and stays in the local cache.
+
+| Config key | Effect |
+| --- | --- |
+| `languages` | Names every pack in the repository, so `model.asr.languages` and the language check work before anything is downloaded. |
+| `default_language` | Fetched and loaded when the model is created. |
+| `preload_languages` | Also fetched when the model is created. |
+
+To pay the download cost up front for a known set of languages:
+
+```py
+model = onnx_asr.load_model("OpenVoiceOS/mms-1b-all-onnx")  # model type from config.json
+model.asr.preload("swh", "yor", "pt")
+```
+
+A full local directory keeps working exactly as before: the packs on disk are used and
+nothing is downloaded.
+
 ## Speech-LLM (audio encoder + projector + causal LM)
 
 Models in this family transcribe with a causal language model that receives audio

@@ -333,8 +333,10 @@ Add a `config.json`:
 The prompt token ids are encoded at export time with the Hugging Face tokenizer,
 so the package needs no tokenizer at runtime. `prompt_prefix_ids` ends with the
 audio start token and `prompt_suffix_ids` starts with the audio end token; the
-audio embeddings go between them. `language_prompt_ids` is optional and gives one
-prefix per language for the `language` argument. `text_start_token_id` is also
+audio embeddings go between them. `language_prompt_ids` and `language_suffix_ids`
+are optional and give one prefix (or suffix) per language for the `language`
+argument: Qwen3-ASR puts the language marker before the audio, Voxtral puts it
+after. `text_start_token_id` is also
 optional: some models write a preamble before the transcription (Qwen3-ASR
 writes the detected language), and the runtime drops everything up to and
 including that marker token.
@@ -579,6 +581,63 @@ Limitations:
 * Greedy decoding only.
 * Custom prompts are not supported; only the baked prompt ids.
 
+### Prompted decoding (OWSM style)
+
+By default `espnet-aed` starts decoding from `<sos/eos>` and stops at `<sos/eos>`. Models
+of the OWSM family, such as `DataoceanAI/dolphin-small`, start from `<sos>`, stop at
+`<eos>` and put a task prompt in between. Four keys in `config.json` describe that:
+
+```json
+{
+    "sos_token": "<sos>",
+    "eos_token": "<eos>",
+    "prompt_tokens": ["{language}", "{region}", "<asr>", "<notimestamp>"],
+    "languages": ["zh-CN", "zh-TW", "ja-JP"],
+    "language_aliases": { "zh": "zh-CN", "ja": "ja-JP" },
+    "default_language": "zh-CN"
+}
+```
+
+`prompt_tokens` holds one entry per decode step after the start token. An entry is a
+vocabulary token, which the runtime forces, or one of the placeholders `{language}` and
+`{region}`, which `recognize(..., language=...)` fills in. `language` accepts a full tag
+(`zh-CN`), the same tag with an underscore (`zh_CN`) or a bare language (`zh`), which
+`language_aliases` maps to a full tag. A placeholder with nothing to fill it in stays
+free and the model predicts that slot itself, the same way the Dolphin code predicts the
+language and the region when the caller gives neither. The prompt tokens never reach the
+transcript.
+
+Leave all four keys out and the model decodes `<sos/eos>` to `<sos/eos>` as before.
+
+### ESPnet `default` frontend in the graph
+
+`DataoceanAI/dolphin-small` uses the ESPnet `default` frontend (STFT 512/400/160 plus 80
+log-mel) and `global_mvn`, which no onnx-asr preprocessor computes. Put the frontend in
+the encoder graph, take the waveform as `features` and declare
+`"preprocessor": "identity"`.
+
+`torch.stft` does not convert, so build the STFT as a strided `conv1d` over a DFT basis
+windowed by the same padded Hann window that `torch.stft` builds internally: pad the
+waveform by `n_fft // 2` on both sides in `reflect` mode, then convolve with a
+`(2 * (n_fft // 2 + 1), 1, n_fft)` kernel of windowed cosines and negated sines, stride
+`hop_length`. The power spectrum is the sum of the squares of the two halves. The rest
+(librosa mel matrix, `clamp(1e-10)`, `log`, masking of the padded frames) converts as
+written. Against the native frontend the largest difference is 2.5e-4 on a log-mel value
+of -21, which is float32 DFT-against-FFT noise in near-silent bins; the largest relative
+difference on the same clip is 1.2e-5.
+
+Do **not** trim the waveform to `features_lens.max()` here. The frame count comes from
+the sample count, and an unbacked symbolic length makes `torch.export` fail on the
+`max_len > 0` guard inside `make_pad_mask`.
+
+Quantize with `op_types_to_quantize=["MatMul"]` and exclude the mel projection of the
+frontend (`nodes_to_exclude=["node_matmul"]`). The STFT `Conv` and the mel `MatMul` run
+over a power spectrum that spans ten orders of magnitude, and int8 weights there destroy
+the features: the model then transcribes every clip as the same short phrase.
+
+An export of `DataoceanAI/dolphin-small` is at
+[OpenVoiceOS/dolphin-small-onnx](https://huggingface.co/OpenVoiceOS/dolphin-small-onnx).
+
 ## Granite Speech NAR (CTC encoder + bidirectional editor)
 
 `ibm-granite/granite-speech-4.1-2b-nar` does not decode token by token. A conformer
@@ -631,3 +690,63 @@ Limitations:
 * The runtime processes one waveform at a time, so a batch is a loop.
 * Greedy decoding only, and no timestamps.
 * Transcription only. The model card lists en, fr, de, es and pt.
+
+## Meta Omnilingual ASR CTC
+
+[Omnilingual ASR](https://github.com/facebookresearch/omnilingual-asr) is a wav2vec2
+encoder with a CTC head that Meta released under Apache-2.0 for more than 1600
+languages. For many of them it is the first available speech recognition model.
+
+The graph needs no conversion work here: the
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) project publishes exports that
+already match the contract of this package.
+
+Graph contract:
+
+| Item | Value |
+|---|---|
+| Input | `x`, float32, `[batch, num_samples]`, raw 16 kHz waveform |
+| Output | `logits`, float32, `[batch, num_frames, vocab_size]`, unnormalized |
+| Preprocessor | `identity` — the convolutional feature extractor is in the graph |
+| Subsampling factor | 320 (one frame per 20 ms) |
+| Vocabulary | `tokens.txt`, one shared vocabulary for every language |
+| Blank | index 0, the `<s>` token |
+| Language selection | none — the CTC models are not language-conditioned |
+
+The vocabulary holds real spaces, not the `▁` marker, so a line of `tokens.txt` can
+be a space followed by its index. The reader splits from the right, and the decoder
+joins the tokens without substitution.
+
+Write `config.json` next to the model:
+
+```json
+{
+    "model_type": "omnilingual-ctc",
+    "subsampling_factor": 320
+}
+```
+
+If the export keeps its weights in a separate file, rename that file to
+`model.onnx.data` and patch the `location` field of every external tensor, so the
+resolver downloads it with the graph:
+
+```py
+import onnx
+
+model = onnx.load("model.onnx", load_external_data=False)
+for tensor in model.graph.initializer:
+    for entry in tensor.external_data:
+        if entry.key == "location":
+            entry.value = "model.onnx.data"
+onnx.save(model, "out/model.onnx")
+```
+
+An export of `omniASR_CTC_1B_v2` is at
+[OpenVoiceOS/omnilingual-asr-ctc-1b-onnx](https://huggingface.co/OpenVoiceOS/omnilingual-asr-ctc-1b-onnx).
+
+Limitations:
+
+* The graph takes no length input, so a padded batch decodes its tail from the
+  padding. The frame count trims the result, but one waveform at a time is safer.
+* Upstream accepts audio shorter than 40 seconds. Use a VAD for longer audio.
+* The models write no punctuation and no capitalization for most languages.

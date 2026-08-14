@@ -42,7 +42,8 @@ def _ctc_collapse(token_ids: npt.NDArray[np.int64], blank_id: int) -> npt.NDArra
         return token_ids
     kept = np.concatenate([[True], token_ids[1:] != token_ids[:-1]])
     collapsed = token_ids[kept]
-    return collapsed[collapsed != blank_id]
+    result: npt.NDArray[np.int64] = collapsed[collapsed != blank_id]
+    return result
 
 
 def _insertion_slots(token_ids: npt.NDArray[np.int64], blank_id: int, min_length: int) -> npt.NDArray[np.int64]:
@@ -96,9 +97,7 @@ class GraniteNar(BaseAsr):
         assert is_float32_array(ctc_logits)
         return audio_embeds, ctc_logits
 
-    def _edit(
-        self, audio_embeds: npt.NDArray[np.float32], text_ids: npt.NDArray[np.int64]
-    ) -> npt.NDArray[np.float32]:
+    def _edit(self, audio_embeds: npt.NDArray[np.float32], text_ids: npt.NDArray[np.int64]) -> npt.NDArray[np.float32]:
         (logits,) = self._editor.run(["logits"], {"audio_embeds": audio_embeds, "text_ids": text_ids[None]})
         assert is_float32_array(logits)
         return logits

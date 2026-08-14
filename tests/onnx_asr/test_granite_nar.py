@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 
 import numpy as np
+import numpy.typing as npt
 import onnx
 import pytest
 from onnx import TensorProto, helper, numpy_helper
 
+from onnx_asr.asr import Preprocessor
 from onnx_asr.models.granite_nar import GraniteNar, _ctc_collapse, _insertion_slots
 
 HIDDEN = 4
@@ -96,8 +98,10 @@ def _make_editor(path: Path) -> None:
     _save(graph, path)
 
 
-def _identity_preprocessor(_name: str):
-    def preprocessor(waveforms, waveforms_lens):
+def _identity_preprocessor(_name: str) -> Preprocessor:
+    def preprocessor(
+        waveforms: npt.NDArray[np.float32], waveforms_lens: npt.NDArray[np.int64]
+    ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.int64]]:
         return waveforms, waveforms_lens
 
     return preprocessor
@@ -185,7 +189,7 @@ def test_editor_sees_the_interleaved_hypothesis(model: GraniteNar) -> None:
     seen: list[np.ndarray] = []
     edit = model._edit
 
-    def spy(audio_embeds, text_ids):
+    def spy(audio_embeds: npt.NDArray[np.float32], text_ids: npt.NDArray[np.int64]) -> npt.NDArray[np.float32]:
         seen.append(text_ids)
         return edit(audio_embeds, text_ids)
 

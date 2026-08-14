@@ -4070,7 +4070,7 @@ dev = [
     { name = "mypy", specifier = ">=1.20.1" },
     { name = "nbstripout", specifier = ">=0.9.1" },
     { name = "numpy", specifier = ">=2.2.6" },
-    { name = "onnx", specifier = ">=1.21.0" },
+    { name = "onnx", specifier = ">=1.17.0" },
     { name = "onnx-asr", extras = ["hub"] },
     { name = "onnxscript", specifier = ">=0.6.2" },
     { name = "pytest", specifier = ">=9.0.3" },
@@ -4091,7 +4091,7 @@ jupyter = [
     { name = "nbstripout", specifier = ">=0.9.1" },
 ]
 test = [
-    { name = "onnx", specifier = ">=1.21.0" },
+    { name = "onnx", specifier = ">=1.17.0" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
     { name = "soundfile", specifier = ">=0.14.0" },
@@ -4103,7 +4103,7 @@ test-all = [
     { name = "ml-dtypes", marker = "python_full_version >= '3.13'", specifier = ">=0.5.4" },
     { name = "nemo-toolkit", extras = ["asr"], marker = "python_full_version >= '3.13'", specifier = ">=2.7.2" },
     { name = "numpy", marker = "python_full_version >= '3.13'", specifier = ">=2.2.6" },
-    { name = "onnx", marker = "python_full_version >= '3.13'", specifier = ">=1.21.0" },
+    { name = "onnx", marker = "python_full_version >= '3.13'", specifier = ">=1.17.0" },
     { name = "onnxscript", marker = "python_full_version >= '3.13'", specifier = ">=0.6.2" },
     { name = "openai-whisper", marker = "python_full_version >= '3.13'", specifier = ">=20250625" },
     { name = "pytest", marker = "python_full_version >= '3.13'", specifier = ">=9.0.3" },

@@ -345,3 +345,62 @@ def test_waveform_normalization_is_applied(slam_model: SpeechLlm) -> None:
 
     assert seen[0].mean() == pytest.approx(0.0, abs=1e-5)
     assert seen[0].std() == pytest.approx(1.0, abs=1e-4)
+
+
+LANGUAGE_SUFFIX_IDS = [3, 5]
+
+
+@pytest.fixture
+def voxtral_model(tmp_path: Path) -> SpeechLlm:
+    """A Voxtral shaped model: fixed encoder and the language marker after the audio."""
+    audio_length = 6
+    prefill = len(PREFIX_IDS) + audio_length + len(SUFFIX_IDS)
+
+    _make_fixed_encoder(tmp_path / "encoder.onnx", audio_length)
+    _make_embed_tokens(tmp_path / "embed_tokens.onnx")
+    _make_decoder(tmp_path / "decoder.onnx", prefill)
+
+    with (tmp_path / "vocab.json").open("wt", encoding="utf-8") as f:
+        json.dump(VOCAB_JSON, f)
+
+    config = {
+        "model_type": "speech-llm",
+        "features_size": MEL_BINS,
+        "eos_token_ids": [EOS_ID],
+        "max_sequence_length": 16,
+        "prompt_prefix_ids": PREFIX_IDS,
+        "prompt_suffix_ids": SUFFIX_IDS,
+        "language_suffix_ids": {"en": LANGUAGE_SUFFIX_IDS, "English": LANGUAGE_SUFFIX_IDS},
+    }
+    with (tmp_path / "config.json").open("wt", encoding="utf-8") as f:
+        json.dump(config, f)
+
+    files = {name: tmp_path / f"{name}.onnx" for name in ("encoder", "embed_tokens", "decoder")} | {
+        "vocab": tmp_path / "vocab.json",
+        "config": tmp_path / "config.json",
+    }
+    return SpeechLlm(files, _fake_preprocessor, {})
+
+
+@pytest.mark.parametrize(
+    ("language", "expected_suffix"), [(None, SUFFIX_IDS), ("en", LANGUAGE_SUFFIX_IDS), ("english", LANGUAGE_SUFFIX_IDS)]
+)
+def test_language_suffix_ids(voxtral_model: SpeechLlm, language: str | None, expected_suffix: list[int]) -> None:
+    seen: list[list[int]] = []
+    embed = voxtral_model._embed
+
+    def _tracking_embed(ids: list[int]) -> npt.NDArray[np.float32]:
+        seen.append(ids)
+        return embed(ids)
+
+    voxtral_model._embed = _tracking_embed  # type: ignore[method-assign,assignment]
+
+    samples = int(AUDIO_SECONDS * 16_000)
+    results = list(
+        voxtral_model.recognize_batch(
+            np.zeros((1, samples), dtype=np.float32), np.array([samples], dtype=np.int64), language=language
+        )
+    )
+
+    assert seen[:2] == [PREFIX_IDS, expected_suffix]
+    assert results[0].text == "hello world"

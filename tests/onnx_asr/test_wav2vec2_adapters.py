@@ -5,7 +5,6 @@ two fake languages with different vocabulary sizes run through one session.
 """
 
 import json
-from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +14,7 @@ import pytest
 from onnx import TensorProto, helper
 
 import onnx_asr
-from onnx_asr.asr import Preprocessor
+from onnx_asr.asr import FileFetcher, Preprocessor
 from onnx_asr.models.wav2vec2_adapters import (
     LanguageNotFoundError,
     LanguageNotSpecifiedError,
@@ -239,7 +238,7 @@ def _identity_preprocessor(name: str) -> Preprocessor:  # noqa: ARG001
     return preprocess
 
 
-def _make_fetcher(model_dir: Path, remote: Path, fetched: list[str]) -> Callable[[str], Path]:
+def _make_fetcher(model_dir: Path, remote: Path, fetched: list[str]) -> FileFetcher:
     def fetch(filename: str) -> Path:
         fetched.append(filename)
         target = model_dir / filename

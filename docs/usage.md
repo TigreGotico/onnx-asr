@@ -211,6 +211,7 @@ API reference: [onnx_asr.load_model][], [recognize][onnx_asr.adapters.AsrAdapter
 * `nemo-conformer-rnnt` for NeMo Conformer/FastConformer/Parakeet with RNN-T decoder
 * `nemo-conformer-tdt` for NeMo Conformer/FastConformer/Parakeet with TDT decoder
 * `nemo-conformer-aed` for NeMo Canary with Transformer decoder
+* `omnilingual-ctc` for Meta Omnilingual ASR CTC, one shared vocabulary for 1600+ languages (see [conversion](conversion.md#meta-omnilingual-asr-ctc))
 * `t-one-ctc` for T-Tech T-one with CTC decoder
 * `wav2vec2-ctc` for HuggingFace Wav2Vec2 with CTC decoder (see [conversion](conversion.md#huggingface-wav2vec2-ctc))
 * `whisper-ort` for Whisper (exported with [onnxruntime](conversion.md#openai-whisper-with-onnxruntime-export))

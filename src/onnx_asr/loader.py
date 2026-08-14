@@ -65,7 +65,6 @@ AsrTypeNames = Literal[
     "nemo-conformer-tdt",
     "nemo-conformer-aed",
     "sensevoice",
-    "speech-llm",
     "t-one-ctc",
     "vosk",
     "wav2vec2-ctc",
@@ -334,8 +333,6 @@ def load_model(
                 GigaAM v3 (`gigaam-v3-ctc` | `gigaam-v3-rnnt` |
                            `gigaam-v3-e2e-ctc` | `gigaam-v3-e2e-rnnt`)
                 GigaAM Multilingual (`gigaam-multilingual-ctc` | `gigaam-multilingual-large-ctc`)
-                ESPnet E-Branchformer (`espnet-ctc` | `espnet-aed`)
-                Granite Speech NAR, CTC encoder + bidirectional editor (`granite-nar`)
                 SenseVoice, FunASR non-autoregressive CTC with rich tokens (`sensevoice`)
                 Kaldi Transducer (`kaldi-rnnt`)
                 NeMo Conformer (`nemo-conformer-ctc` | `nemo-conformer-rnnt` | `nemo-conformer-tdt` |

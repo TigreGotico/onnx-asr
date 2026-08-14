@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 
 import numpy as np
+import numpy.typing as npt
 import onnx
 import pytest
 from onnx import TensorProto, helper, numpy_helper
 
+from onnx_asr.asr import Preprocessor, TimestampedResult
 from onnx_asr.models.sensevoice import SenseVoice
 
 BLANK_ID = 0
@@ -82,8 +84,10 @@ def _make_model(path: Path) -> None:
 SEEN_WAVEFORMS: list[np.ndarray] = []
 
 
-def _identity_preprocessor(_name: str):
-    def preprocessor(waveforms, waveforms_lens):
+def _identity_preprocessor(_name: str) -> Preprocessor:
+    def preprocessor(
+        waveforms: npt.NDArray[np.float32], waveforms_lens: npt.NDArray[np.int64]
+    ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.int64]]:
         SEEN_WAVEFORMS.append(waveforms)
         features = np.zeros((waveforms.shape[0], 20, 80), dtype=np.float32)
         return features, waveforms_lens
@@ -129,7 +133,7 @@ def test_the_waveform_is_scaled_to_the_int16_range_before_the_fbank(model: Sense
     np.testing.assert_allclose(SEEN_WAVEFORMS[0], 0.5 * 32768.0)
 
 
-def _recognize(model: SenseVoice, **kwargs: object):
+def _recognize(model: SenseVoice, **kwargs: object) -> TimestampedResult:
     waveform = np.zeros((1, 16_000), dtype=np.float32)
     (result,) = model.recognize_batch(waveform, np.array([16_000], dtype=np.int64), **kwargs)
     return result

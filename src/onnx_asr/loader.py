@@ -65,8 +65,6 @@ AsrTypeNames = Literal[
     "nemo-conformer-tdt",
     "nemo-conformer-aed",
     "omnilingual-ctc",
-    "sensevoice",
-    "speech-llm",
     "t-one-ctc",
     "vosk",
     "wav2vec2-ctc",
@@ -345,7 +343,6 @@ def load_model(
                 NeMo Parakeet 0.6B Multilingual (`nemo-parakeet-tdt-0.6b-v3`)
                 NeMo Canary (`nemo-canary-1b-v2`)
                 Omnilingual ASR CTC, 1600+ languages (`omnilingual-ctc`)
-                Speech-LLM, audio encoder + projector + causal LM (`speech-llm`)
                 T-One (`t-one-ctc` | `t-tech/t-one`)
                 Vosk (`vosk` | `alphacep/vosk-model-ru` | `alphacep/vosk-model-small-ru`)
                 Wav2Vec2 CTC (`wav2vec2-ctc`)

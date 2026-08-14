@@ -274,11 +274,12 @@ def test_recognize_batch_with_language(model: SpeechLlm) -> None:
 
 def test_trim_features_cuts_the_padding_to_a_frame_multiple(model: SpeechLlm) -> None:
     seen: list[np.ndarray] = []
-    model._encoder = type(
-        "Stub",
-        (),
-        {"run": lambda _self, _names, inputs: seen.append(inputs["input_features"]) or [np.zeros((1, 1, HIDDEN), np.float32)]},
-    )()
+
+    def _run(_self: object, _names: list[str], inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
+        seen.append(inputs["input_features"])
+        return [np.zeros((1, 1, HIDDEN), np.float32)]
+
+    model._encoder = type("Stub", (), {"run": _run})()
     model._encoder_inputs = {"input_features"}
     features = np.zeros((MEL_BINS, 3000), dtype=np.float32)
 

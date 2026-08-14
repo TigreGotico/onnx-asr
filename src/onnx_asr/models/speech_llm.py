@@ -30,7 +30,7 @@ import onnxruntime as rt
 from onnx_asr.asr import BaseAsr, Preprocessor, TimestampedResult
 from onnx_asr.models.whisper import bytes_to_unicode
 from onnx_asr.onnx import OnnxSessionOptions
-from onnx_asr.utils import is_float32_array
+from onnx_asr.utils import is_float32_array, is_int64_array
 
 NEG_INF = np.float32(-3.4028235e38)
 SPECIAL_TOKEN_PATTERN = re.compile(r"<\|.*\|>\Z|<(?:s|/s|unk|pad)>\Z")
@@ -137,6 +137,19 @@ class SpeechLlm(BaseAsr):
         inputs: dict[str, npt.NDArray[typing.Any]]
         if self._encoder_inputs == {"input_features"}:
             inputs = {"input_features": features[None]}
+        elif "input_features_lens" in self._encoder_inputs:
+            # NeMo FastConformer encoders take the feature length and mask the padding
+            # themselves, so they also return the valid embedding length.
+            audio_embeds, lens = self._encoder.run(
+                ["audio_embeds", "audio_embeds_lens"],
+                {
+                    "input_features": features[None, :, :feature_len],
+                    "input_features_lens": np.array([feature_len], dtype=np.int64),
+                },
+            )
+            assert is_float32_array(audio_embeds)
+            assert is_int64_array(lens)
+            return audio_embeds[:, : int(lens[0])]
         else:
             padded_frames, valid_indices, bias = self._audio_windows(feature_len)
             inputs = {
@@ -238,6 +251,6 @@ class SpeechLlm(BaseAsr):
         features, _ = self._preprocessor(waveforms, waveforms_len)
 
         for i, waveform_len in enumerate(waveforms_len):
-            feature_len = min(int(-(-int(waveform_len) // self._hop_length)), self._max_frames)
+            feature_len = min(int(-(-int(waveform_len) // self._hop_length)), self._max_frames, features.shape[-1])
             audio_embeds = self._encode(features[i], max(feature_len, 1))
             yield self._decode_tokens(self._generate(audio_embeds, language))

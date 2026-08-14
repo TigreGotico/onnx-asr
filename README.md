@@ -81,10 +81,11 @@ The package supports the following modern ASR model architectures. See [supporte
 * HuggingFace Wav2Vec2 with per-language adapters — one shared base plus a small pack per language, for example Meta MMS-1B-all (`wav2vec2-adapters`, pass `language=` to `recognize`)
 * OpenAI Whisper
 * Speech-LLM: audio encoder + projector + causal LM with a KV cache (for example Qwen3-ASR)
+* Useful Sensors Moonshine (English only)
 
 When these models are saved in ONNX format, typically only the encoder and decoder are included. Running them requires the corresponding preprocessing and decoding implementations. This package provides both for all supported models:
 
-* Log-mel spectrogram preprocessors
+* Log-mel spectrogram preprocessors (Moonshine reads the raw waveform and needs none)
 * Greedy search decoding
 
 ## Community Models

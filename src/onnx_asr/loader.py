@@ -13,6 +13,7 @@ from onnx_asr.models.espnet import EspnetAED, EspnetCtc
 from onnx_asr.models.gigaam import GigaamMultilingualCtc, GigaamV2Ctc, GigaamV2Rnnt, GigaamV3E2eCtc, GigaamV3E2eRnnt
 from onnx_asr.models.granite_nar import GraniteNar
 from onnx_asr.models.kaldi import KaldiTransducer
+from onnx_asr.models.moonshine import Moonshine
 from onnx_asr.models.nemo import NemoConformerAED, NemoConformerCtc, NemoConformerRnnt, NemoConformerTdt
 from onnx_asr.models.pyannote import PyAnnoteVad
 from onnx_asr.models.silero import SileroVad
@@ -59,6 +60,8 @@ AsrNames = Literal[
     "alphacep/vosk-model-small-ru",
     "t-tech/t-one",
     "whisper-base",
+    "moonshine-tiny",
+    "moonshine-base",
 ]
 """Supported ASR model names (can be automatically downloaded from the Hugging Face)."""
 
@@ -72,6 +75,7 @@ AsrTypeNames = Literal[
     "nemo-conformer-tdt",
     "nemo-conformer-aed",
     "speech-llm",
+    "moonshine",
     "t-one-ctc",
     "vosk",
     "wav2vec2-adapters",
@@ -94,6 +98,7 @@ AsrTypes: TypeAlias = (
     | GigaamV2Rnnt
     | GraniteNar
     | KaldiTransducer
+    | Moonshine
     | NemoConformerCtc
     | NemoConformerRnnt
     | NemoConformerAED
@@ -130,12 +135,15 @@ def create_asr_resolver(
         "espnet-aed": EspnetAED,
         "espnet-ctc": EspnetCtc,
         "granite-nar": GraniteNar,
+        "moonshine-tiny": Moonshine,
+        "moonshine-base": Moonshine,
         "kaldi-rnnt": KaldiTransducer,
         "nemo-conformer-ctc": NemoConformerCtc,
         "nemo-conformer-rnnt": NemoConformerRnnt,
         "nemo-conformer-tdt": NemoConformerTdt,
         "nemo-conformer-aed": NemoConformerAED,
         "speech-llm": SpeechLlm,
+        "moonshine": Moonshine,
         "t-one-ctc": TOneCtc,
         "vosk": KaldiTransducer,
         "wav2vec2-adapters": Wav2Vec2Adapters,
@@ -364,6 +372,8 @@ def load_model(
                 NeMo Parakeet 0.6B Multilingual (`nemo-parakeet-tdt-0.6b-v3`)
                 NeMo Canary (`nemo-canary-1b-v2`)
                 Speech-LLM, audio encoder + projector + causal LM (`speech-llm`)
+                Moonshine En (`moonshine` | `moonshine-tiny` | `moonshine-base` |
+                              `onnx-community/moonshine-*-ONNX`)
                 T-One (`t-one-ctc` | `t-tech/t-one`)
                 Vosk (`vosk` | `alphacep/vosk-model-ru` | `alphacep/vosk-model-small-ru`)
                 Wav2Vec2 CTC (`wav2vec2-ctc`)

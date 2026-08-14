@@ -96,7 +96,6 @@ test = ["onnx>=1.17.0", "pytest>=9.0.3", "pytest-cov>=7.0.0", "soundfile>=0.14.0
 test-all = [
     "kaldi-native-fbank>=1.22.3",
     "nemo-toolkit[asr]>=2.7.2",
-    "onnx>=1.21.0",
     "openai-whisper>=20250625",
     "torch>=2.11.0",
     "torchaudio>=2.11.0",

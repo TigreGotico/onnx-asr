@@ -48,6 +48,7 @@ owner link to find other languages and model sizes.
 | [IISc Vaani FastConformer](https://huggingface.co/OpenVoiceOS/artpark-iisc-vaani-fastconformer-multi-onnx) | Multilingual and individual Indic languages | NeMo Conformer TDT | [ARTPARK-IISc](https://huggingface.co/ARTPARK-IISc) | FP32, INT8 | MIT | Metadata inspected |
 | [NVIDIA monolingual Conformer](https://huggingface.co/OpenVoiceOS/nvidia-en-conformer-ctc-large-onnx) | Multiple languages | NeMo Conformer CTC/RNN-T | [NVIDIA](https://huggingface.co/nvidia) | FP32, INT8 | CC-BY-4.0 | Metadata inspected |
 | [Localized Parakeet](https://huggingface.co/OpenVoiceOS/yuriyvnv-parakeet-tdt-0.6b-pl-onnx) | Polish, Estonian, Dutch, Slovenian, Portuguese, and others | NeMo Conformer TDT | Community fine-tunes | FP32 | CC-BY-4.0 | Metadata inspected |
+| [Meta Omnilingual ASR CTC](https://huggingface.co/OpenVoiceOS/omnilingual-asr-ctc-1b-onnx) | 1600+ languages, one shared vocabulary | Omnilingual CTC | [Meta](https://huggingface.co/facebook) | FP32, INT8 | Apache-2.0 | Transcribed against references |
 | [Wav2Vec2](https://huggingface.co/OpenVoiceOS/wav2vec2-xlsr-300m-finnish-onnx) | Multiple languages | Wav2Vec2 CTC | Multiple publishers | FP32 | Apache-2.0 | Metadata inspected |
 
 Licenses can differ between repositories in a family. Always check the selected model

@@ -30,11 +30,34 @@ model_repos = {
     "nemo-parakeet-tdt-0.6b-v3": "istupakov/parakeet-tdt-0.6b-v3-onnx",
     "nemo-canary-1b-v2": "istupakov/canary-1b-v2-onnx",
     "whisper-base": "istupakov/whisper-base-onnx",
+    "moonshine-tiny": "OpenVoiceOS/moonshine-tiny-onnx",
+    "moonshine-base": "OpenVoiceOS/moonshine-base-onnx",
     "silero": "istupakov/silero-vad-onnx",
 }
 
 
+LAZY_DIR_SUFFIX = "/*"
+"""A `_get_model_files` value that ends with this names a directory whose members are fetched on demand."""
+
+
+def _is_lazy_dir(filename: str) -> bool:
+    return filename.endswith(LAZY_DIR_SUFFIX)
+
+
+def _find_dir(path: Path, filename: str) -> Path:
+    """Resolve a directory of model assets."""
+    if _is_lazy_dir(filename):
+        # Members arrive one by one through `fetch`, so an empty or missing directory is normal.
+        return Path(path, filename.removesuffix(LAZY_DIR_SUFFIX))
+    directory = Path(path, filename)
+    if not directory.is_dir():
+        raise ModelFileNotFoundError(filename, path)
+    return directory
+
+
 class _Model(Protocol):
+    _supports_fetcher: bool
+
     @staticmethod
     def _get_model_files(quantization: str | None = None) -> dict[str, str]: ...
 
@@ -102,12 +125,15 @@ class Resolver(Generic[T]):
 
     def _download_model(self, quantization: str | None, *, local_files_only: bool) -> Path:
         from huggingface_hub import snapshot_download  # noqa: PLC0415
+        from huggingface_hub.errors import LocalEntryNotFoundError  # noqa: PLC0415
 
-        files = list(self.model_type._get_model_files(quantization).values())
+        files = [file for file in self.model_type._get_model_files(quantization).values() if not _is_lazy_dir(file)]
         files = [
             *files,
             *(file.removeprefix("**/") for file in files if file.startswith("**/")),
         ]
+        # a value that ends with "/" names a directory of model assets
+        files = [file + "**" if file.endswith("/") else file for file in files]
         files = [
             "config.json",
             "config.yaml",
@@ -116,11 +142,18 @@ class Resolver(Generic[T]):
         ]
 
         assert self.repo_id is not None
-        return Path(
-            snapshot_download(
-                self.repo_id, local_dir=self.local_dir, local_files_only=local_files_only, allow_patterns=files
-            )  # nosec
-        )
+        try:
+            return Path(
+                snapshot_download(
+                    self.repo_id, local_dir=self.local_dir, local_files_only=local_files_only, allow_patterns=files
+                )  # nosec
+            )
+        except LocalEntryNotFoundError as e:
+            # raised with local_files_only=True when files are missing from the local
+            # snapshot (also as IncompleteSnapshotError in newer huggingface_hub);
+            # translate so offline resolution reports a missing model file
+            filename = "<missing files in local snapshot>"
+            raise ModelFileNotFoundError(filename, self.repo_id) from e
 
     def _resolve_model_files(self, path: Path, quantization: str | None) -> dict[str, Path]:
         files = self.model_type._get_model_files(quantization)
@@ -128,6 +161,9 @@ class Resolver(Generic[T]):
             files |= {"config": "config.json"}
 
         def find(filename: str) -> Path:
+            if _is_lazy_dir(filename) or filename.endswith("/"):
+                return _find_dir(path, filename)
+
             files = list(path.glob(filename))
             if len(files) > 1:
                 raise MoreThanOneModelFileFoundError(filename, path)
@@ -158,6 +194,29 @@ class Resolver(Generic[T]):
             if self.offline:
                 raise
             return self._download_config(local_files_only=False)
+
+    def fetch(self, filename: str) -> Path:
+        """Resolve one model file, downloading it if the model repository is remote.
+
+        Models with a lazily fetched asset directory call this for a single member,
+        for example `adapters/swh.npz`. A local directory keeps working: the file is
+        returned from it and nothing is downloaded.
+        """
+        if self.local_dir is not None and (local_path := Path(self.local_dir, filename)).is_file():
+            return local_path
+
+        if self.repo_id is None:
+            assert self.local_dir is not None
+            raise ModelFileNotFoundError(filename, self.local_dir)
+
+        from huggingface_hub import hf_hub_download  # noqa: PLC0415
+
+        try:
+            return Path(hf_hub_download(self.repo_id, filename, local_dir=self.local_dir, local_files_only=True))  # nosec
+        except FileNotFoundError:
+            if self.offline:
+                raise
+            return Path(hf_hub_download(self.repo_id, filename, local_dir=self.local_dir))  # nosec
 
     def resolve_model(self, *, quantization: str | None = None) -> dict[str, Path]:
         """Resolve paths to model files."""

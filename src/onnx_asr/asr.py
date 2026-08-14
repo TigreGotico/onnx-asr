@@ -39,6 +39,13 @@ class AsrConfig(TypedDict, total=False):
     subsampling_factor: int
     max_tokens_per_step: int
     max_sequence_length: int
+    default_language: str
+    language_aliases: dict[str, str]
+    decoder_start_token_id: int
+    eos_token_id: int
+    max_position_embeddings: int
+    languages: list[str]
+    preload_languages: list[str]
 
 
 class Preprocessor(Protocol):
@@ -51,8 +58,19 @@ class Preprocessor(Protocol):
         ...
 
 
+class FileFetcher(Protocol):
+    """Fetches one model file on demand and returns its local path."""
+
+    def __call__(self, filename: str) -> Path:
+        """Download `filename` from the model repository if it is not local yet."""
+        ...
+
+
 class Asr(Protocol):
     """ASR protocol."""
+
+    _supports_fetcher: bool = False
+    """The constructor takes a `fetcher` keyword for on-demand file download."""
 
     @staticmethod
     def _get_sample_rate() -> Literal[8_000, 16_000]:

@@ -175,3 +175,679 @@ word-delimiter token (`|`) becomes `▁`, which onnx-asr converts to a literal s
 when decoding. `subsampling_factor` is the product of the feature-encoder conv strides
 (320 for the standard wav2vec2/XLS-R conv stack) and is only used to scale token
 timestamps.
+## HuggingFace Wav2Vec2 with per-language adapters
+
+`facebook/mms-1b-all` is one 1B-parameter base with a small attention adapter and a
+CTC head per language, for more than a thousand languages. A merged export per
+language costs 3.6 GB every time. The `wav2vec2-adapters` model type keeps the base
+shared: the adapter layers and the CTC head are **graph inputs**, not initializers,
+so one session serves every language and a language costs only its pack.
+
+### Model layout
+
+```text
+model.onnx            shared base, language tensors exposed as inputs
+config.json           {"model_type": "wav2vec2-adapters", ...}
+adapters/<iso>.npz    one array per language-dependent graph input, plus vocab_size
+vocabs/<iso>.txt      onnx-asr vocabulary for that language
+```
+
+### Graph contract
+
+| Input | Shape | Note |
+| --- | --- | --- |
+| `input_values` | `[batch, time]` | raw waveform, 16 kHz |
+| `input_lengths` | `[batch]` | sample count per item |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.norm.weight` | `[hidden]` | one set per encoder layer |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.norm.bias` | `[hidden]` | |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.linear_1.weight` | `[adapter_dim, hidden]` | |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.linear_1.bias` | `[adapter_dim]` | |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.linear_2.weight` | `[hidden, adapter_dim]` | |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.linear_2.bias` | `[hidden]` | |
+| `lm_head.weight` | `[vocab, hidden]` | `vocab` is a dynamic dimension |
+| `lm_head.bias` | `[vocab]` | |
+
+The only output is `logprobs` with shape `[batch, frames, vocab]`.
+
+The `.npz` key names must match the graph input names. `vocab_size` is an extra key
+that holds the true vocabulary size; onnx-asr trims the logits to it, so a base graph
+with a padded head still decodes correctly.
+
+### Export
+
+Detach the language-dependent parameters from the modules and set them from the
+forward arguments, so the tracer sees them as graph inputs. The stateless API
+(`torch.func.functional_call`) does not work here, because the exporter traces the
+module:
+
+```py
+import torch
+from transformers import Wav2Vec2ForCTC
+
+model = Wav2Vec2ForCTC.from_pretrained("facebook/mms-1b-all", target_lang="eng",
+                                       ignore_mismatched_sizes=True).eval()
+keys = sorted(n for n, _ in model.named_parameters() if ".adapter_layer." in n)
+keys += ["lm_head.weight", "lm_head.bias"]
+
+
+state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+model.requires_grad_(False)
+
+slots = []
+for key in keys:
+    parent = model.get_submodule(key.rsplit(".", 1)[0])
+    leaf = key.rsplit(".", 1)[1]
+    del parent._parameters[leaf]
+    setattr(parent, leaf, None)
+    slots.append((parent, leaf))
+
+
+class AdapterFed(torch.nn.Module):
+    def forward(self, input_values, input_lengths, *tensors):
+        for (parent, leaf), value in zip(slots, tensors, strict=True):
+            setattr(parent, leaf, value)
+        logits = model(input_values).logits
+        return torch.nn.functional.log_softmax(logits, dim=-1)
+
+
+tensors = tuple(state[k] for k in keys)
+torch.onnx.export(
+    AdapterFed(),
+    (torch.randn(1, 16000), torch.tensor([16000], dtype=torch.int64), *tensors),
+    "model.onnx",
+    input_names=["input_values", "input_lengths", *keys],
+    output_names=["logprobs"],
+    dynamic_axes={
+        "input_values": {0: "batch", 1: "time"},
+        "input_lengths": {0: "batch"},
+        "logprobs": {0: "batch", 1: "frames", 2: "vocab"},
+        "lm_head.weight": {0: "vocab"},
+        "lm_head.bias": {0: "vocab"},
+    },
+    opset_version=18,
+)
+```
+
+Then, for each language, `model.load_adapter(iso)` and save the same keys to
+`adapters/<iso>.npz` with the language's `vocab_size`, and write `vocabs/<iso>.txt`
+in the format described in [Wav2Vec2 CTC](#huggingface-wav2vec2-ctc).
+
+### Usage
+
+```py
+import onnx_asr
+
+model = onnx_asr.load_model("wav2vec2-adapters", "mms-1b-all-onnx")
+print(model.asr.languages)
+print(model.recognize("test.wav", language="lg"))
+```
+
+`language` takes the pack name (`lug`), a BCP-47 tag whose primary subtag is a pack
+name (`lg-UG`), or an alias from `language_aliases` in `config.json`. Without
+`language`, the model uses `default_language`. An unknown language raises an error
+that lists the languages the model has.
+
+Feature normalization is baked into the graph, so the model uses the `identity`
+preprocessor.
+
+### Downloads: one language at a time
+
+A repository with more than a thousand packs is about 10 GB, so `adapters/` and
+`vocabs/` are **not** downloaded as a whole. From the Hub, `load_model` gets the base
+graph, `config.json` and the pack of `default_language`. Every other pack arrives the
+first time its language is used, and stays in the local cache.
+
+| Config key | Effect |
+| --- | --- |
+| `languages` | Names every pack in the repository, so `model.asr.languages` and the language check work before anything is downloaded. |
+| `default_language` | Fetched and loaded when the model is created. |
+| `preload_languages` | Also fetched when the model is created. |
+
+To pay the download cost up front for a known set of languages:
+
+```py
+model = onnx_asr.load_model("OpenVoiceOS/mms-1b-all-onnx")  # model type from config.json
+model.asr.preload("swh", "yor", "pt")
+```
+
+A full local directory keeps working exactly as before: the packs on disk are used and
+nothing is downloaded.
+
+## Speech-LLM (audio encoder + projector + causal LM)
+
+Models in this family transcribe with a causal language model that receives audio
+embeddings, for example Qwen3-ASR, SLAM-ASR and Cohere Transcribe. The export has
+three graphs:
+
+| File | Inputs | Outputs |
+| --- | --- | --- |
+| `encoder.onnx` | `input_features` `(1, mel, frames)`, and, for windowed encoders, `valid_indices` `(L,)` and `attn_bias` `(1, 1, L, L)` | `audio_embeds` `(1, L, hidden)` |
+| `embed_tokens.onnx` | `input_ids` `(1, S)` | `inputs_embeds` `(1, S, hidden)` |
+| `decoder.onnx` | `inputs_embeds` `(1, S, hidden)`, `attn_bias` `(1, 1, S, P + S)`, `position_ids` `(1, S)`, `past_key_values.{i}.{key,value}` `(1, kv_heads, P, head_dim)` | `logits` `(1, S, vocab)`, `present.{i}.{key,value}` `(1, kv_heads, P + S, head_dim)` |
+
+`encoder.onnx` must include the projector, so its output is already in the
+embedding space of the language model. `attn_bias` is an additive float mask, so
+the runtime controls the attention pattern and the graphs need no branches. The
+audio encoder of Qwen3-ASR attends inside fixed windows, and the runtime builds
+that block-diagonal mask in NumPy. An encoder that attends over the whole fixed
+feature length, like a Whisper encoder, declares only `input_features`, and the
+runtime then sends the features unchanged.
+
+Add a `config.json`:
+
+```json
+{
+    "model_type": "speech-llm",
+    "features_size": 128,
+    "preprocessor": "whisper128",
+    "n_window": 50,
+    "n_window_infer": 800,
+    "eos_token_ids": [151643, 151645],
+    "max_sequence_length": 512,
+    "prompt_prefix_ids": [151644, 8948],
+    "prompt_suffix_ids": [151645, 198],
+    "language_prompt_ids": {"English": [151644, 8948]},
+    "text_start_token_id": 151704,
+    "tokenizer_type": "byte-level",
+    "normalize_waveform": false
+}
+```
+
+The prompt token ids are encoded at export time with the Hugging Face tokenizer,
+so the package needs no tokenizer at runtime. `prompt_prefix_ids` ends with the
+audio start token and `prompt_suffix_ids` starts with the audio end token; the
+audio embeddings go between them. `language_prompt_ids` and `language_suffix_ids`
+are optional and give one prefix (or suffix) per language for the `language`
+argument: Qwen3-ASR puts the language marker before the audio, Voxtral puts it
+after. `text_start_token_id` is also
+optional: some models write a preamble before the transcription (Qwen3-ASR
+writes the detected language), and the runtime drops everything up to and
+including that marker token.
+
+Four more optional keys cover the differences between model families:
+
+* `tokenizer_type` is `"byte-level"` (default) or `"sentencepiece"`.
+* `normalize_waveform` scales the waveform to zero mean and unit variance before
+  the feature extractor. SLAM-ASR models need this.
+* `trim_features` cuts the 30 s padding of the Whisper preprocessor back to the
+  length of the audio, rounded down to this number of frames. Use it for models
+  whose encoder turns every feature frame into an audio embedding (Audio8
+  ARK-ASR), where the padding would otherwise add hundreds of silent embeddings.
+  The value is the subsampling factor times the embedding merge factor, so 8 for
+  a Whisper encoder (subsampling 2) with a merge of 4 frames.
+* `suppress_token_ids` bans token ids in the greedy loop. Models that keep the
+  special tokens in the softmax and let the decoder ban them (Audio8 ARK-ASR
+  bans all special and added tokens) generate nothing usable without it.
+
+For detokenization, save the tokenizer vocabulary as `vocab.json` (a
+`{token: id}` map). Byte-level BPE tokens are decoded with the standard GPT-2
+byte table, the same way as for Whisper. SentencePiece tokens are decoded by
+replacing the space marker and resolving `<0xHH>` byte-fallback tokens.
+
+For a SLAM-ASR model the audio embeddings come before the prompt, so
+`prompt_prefix_ids` is empty and `prompt_suffix_ids` holds the whole prompt.
+
+An export script for `Qwen/Qwen3-ASR-0.6B-hf` is in the
+[issue #73 discussion](https://github.com/istupakov/onnx-asr/issues/73).
+
+Limitations:
+
+* The runtime processes one waveform at a time, so a batch is a loop.
+* Greedy decoding only.
+* Custom prompts are not supported; only the baked prompt ids.
+
+## ESPnet E-Branchformer (CTC and attention decoder)
+
+Install **ESPnet**, **transformers** and **torch**:
+
+```sh
+pip install espnet espnet_model_zoo transformers torch
+```
+
+ESPnet models with an s3prl frontend keep the upstream (here `hf_w2v2_bert2`, which wraps
+`facebook/w2v-bert-2.0`) outside the ONNX graph in ESPnet, so the export rebuilds the
+model without the s3prl frontend and puts the HuggingFace upstream back in front of it.
+The graph input is the w2v-BERT feature (80 mel bins, 2 frame stacking, 160 values per
+frame), which onnx-asr computes with the `"w2vbert"` preprocessor.
+
+```py
+import argparse
+import json
+from pathlib import Path
+
+import torch
+import yaml
+from espnet2.tasks.asr import ASRTask
+from huggingface_hub import hf_hub_download
+from transformers import Wav2Vec2BertModel
+
+repo_id = "inesc-id/EBranch-w2vBERT2-EP"
+exp = "exp/asr_train_set_425_NEW_SEAMLESS"
+onnx_dir = Path("espnet-onnx")
+onnx_dir.mkdir(exist_ok=True)
+
+config = hf_hub_download(repo_id, f"{exp}/config.yaml")
+stats = hf_hub_download(repo_id, "exp/asr_stats_raw_pt_bpe5000_sp/train/feats_stats.npz")
+checkpoint = hf_hub_download(repo_id, f"{exp}/valid.acc.ave_10best.pth")
+
+with open(config) as f:
+    cfg = yaml.safe_load(f)
+
+token_list = list(cfg["token_list"])
+cfg |= {
+    "frontend": None,
+    "frontend_conf": {},
+    "input_size": 1024,  # output size of the s3prl frontend
+    "specaug": None,
+    "specaug_conf": {},
+    "normalize_conf": {"stats_file": stats},
+    "bpemodel": None,
+}
+
+model = ASRTask.build_model(argparse.Namespace(**cfg)).eval()
+state_dict = torch.load(checkpoint, map_location="cpu", weights_only=False)
+model.load_state_dict({k: v for k, v in state_dict.items() if not k.startswith("frontend.")}, strict=False)
+
+upstream = Wav2Vec2BertModel.from_pretrained("facebook/w2v-bert-2.0").eval()
+layer_weights = state_dict["frontend.featurizer.weights"]
+
+
+class EspnetEncoderCtc(torch.nn.Module):
+    def encode(self, features, features_lens):
+        mask = torch.arange(features.shape[1])[None, :] < features_lens[:, None]
+        hidden_states = upstream(
+            input_features=features, attention_mask=mask.long(), output_hidden_states=True
+        ).hidden_states
+        weights = torch.softmax(layer_weights, dim=0)
+        feats = (torch.stack(hidden_states, dim=0) * weights[:, None, None, None]).sum(dim=0)
+        feats_lens = torch.minimum(torch.full_like(features_lens, feats.shape[1]), features_lens)
+        feats, feats_lens = model.normalize(feats, feats_lens)
+        feats, feats_lens = model.preencoder(feats, feats_lens)
+        encoder_out, encoder_out_lens, _ = model.encoder(feats, feats_lens)
+        return encoder_out, encoder_out_lens
+
+    def forward(self, features, features_lens):
+        encoder_out, encoder_out_lens = self.encode(features, features_lens)
+        return model.ctc.log_softmax(encoder_out), encoder_out_lens
+
+
+class EspnetDecoder(torch.nn.Module):
+    def forward(self, tokens, encoder_out, encoder_out_lens):
+        tokens_lens = torch.full((tokens.shape[0],), tokens.shape[1], dtype=torch.long)
+        logits, _ = model.decoder(encoder_out, encoder_out_lens, tokens, tokens_lens)
+        return torch.log_softmax(logits, dim=-1)
+
+
+features = torch.randn(1, 200, 160)
+features_lens = torch.tensor([200])
+
+torch.onnx.export(
+    EspnetEncoderCtc().eval(),
+    (features, features_lens),
+    str(onnx_dir / "model.onnx"),
+    input_names=["features", "features_lens"],
+    output_names=["logprobs", "logprobs_lens"],
+    dynamic_axes={
+        "features": {0: "batch", 1: "frames"},
+        "features_lens": {0: "batch"},
+        "logprobs": {0: "batch", 1: "frames_out"},
+        "logprobs_lens": {0: "batch"},
+    },
+    opset_version=17,
+)
+
+with (onnx_dir / "vocab.txt").open("wt") as f:
+    for i, token in enumerate(token_list):
+        f.write(f"{'<blk>' if token == '<blank>' else token} {i}\n")
+
+with (onnx_dir / "config.json").open("wt") as f:
+    json.dump({"model_type": "espnet-ctc", "subsampling_factor": 8}, f, indent=2)
+```
+
+ESPnet puts the CTC blank at index 0 and names it `<blank>`; rename it to `<blk>` so the
+vocab loader finds it. The SentencePiece `▁` prefix is kept, onnx-asr converts it to a
+space when decoding. `subsampling_factor` scales token timestamps: the w2v-BERT frames
+are 20 ms long and the E-Branchformer `conv2d` input layer subsamples them by 4, so one
+output frame is 80 ms and the factor is 8.
+
+For attention decoding, export `EspnetEncoderCtc.encode` as `encoder.onnx` (outputs
+`encoder_out` and `encoder_out_lens`) and `EspnetDecoder` as `decoder.onnx` (inputs
+`tokens`, `encoder_out` and `encoder_out_lens`, output `logprobs`), and set `model_type`
+to `espnet-aed`. The decoder graph has no key-value cache, onnx-asr recomputes it over
+the whole prefix at every step.
+
+### Notes
+
+Use the `torch.export` based exporter (`dynamo=True`). With the older TorchScript
+exporter the branch-merge `torch.cat` of the E-Branchformer layer fails to convert
+(`All tensors must have the same rank`), because the rank of the attention output is not
+known statically after its reshape.
+
+The frontend makes the graph larger than the 2 GB protobuf limit, so the weights go into
+a sidecar file next to the graph. The exporter writes `<name>.onnx.data`. Keep the
+sidecar in the same directory as the graph, and upload it with the model: the download
+pattern of onnx-asr is `<name>.onnx?data`, which matches `<name>.onnx.data` and
+`<name>.onnx_data`.
+
+Trim the features to `features_lens.max()` before the encoder. ESPnet builds its masks
+with length `max(ilens)`, and the 2 frame stacking of the preprocessor can leave one
+extra half-padded frame, which would put the subsampled mask out of step with the
+convolution output.
+
+Some published ESPnet checkpoints are trained with recipe code that is not in any ESPnet
+release. `inesc-id/EBranch-w2vBERT2-EP`, for example, sets `use_rope: true` and
+`pos_enc_layer_type: ''`, which no public ESPnet accepts. Check that the checkpoint loads
+with `strict=True` before you export; if keys such as `attn.use_rope.freqs` are reported
+as unexpected, the model needs code that the release does not have.
+## Speech-LLM (audio encoder + projector + causal LM)
+
+Models in this family transcribe with a causal language model that receives audio
+embeddings, for example Qwen3-ASR, SLAM-ASR and Cohere Transcribe. The export has
+three graphs:
+
+| File | Inputs | Outputs |
+| --- | --- | --- |
+| `encoder.onnx` | `input_features` `(1, mel, frames)`, and, for windowed encoders, `valid_indices` `(L,)` and `attn_bias` `(1, 1, L, L)` | `audio_embeds` `(1, L, hidden)` |
+| `embed_tokens.onnx` | `input_ids` `(1, S)` | `inputs_embeds` `(1, S, hidden)` |
+| `decoder.onnx` | `inputs_embeds` `(1, S, hidden)`, `attn_bias` `(1, 1, S, P + S)`, `position_ids` `(1, S)`, `past_key_values.{i}.{key,value}` `(1, kv_heads, P, head_dim)` | `logits` `(1, S, vocab)`, `present.{i}.{key,value}` `(1, kv_heads, P + S, head_dim)` |
+
+`encoder.onnx` must include the projector, so its output is already in the
+embedding space of the language model. `attn_bias` is an additive float mask, so
+the runtime controls the attention pattern and the graphs need no branches. The
+audio encoder of Qwen3-ASR attends inside fixed windows, and the runtime builds
+that block-diagonal mask in NumPy. An encoder that attends over the whole fixed
+feature length, like a Whisper encoder, declares only `input_features`, and the
+runtime then sends the features unchanged.
+
+Add a `config.json`:
+
+```json
+{
+    "model_type": "speech-llm",
+    "features_size": 128,
+    "preprocessor": "whisper128",
+    "n_window": 50,
+    "n_window_infer": 800,
+    "eos_token_ids": [151643, 151645],
+    "max_sequence_length": 512,
+    "prompt_prefix_ids": [151644, 8948],
+    "prompt_suffix_ids": [151645, 198],
+    "language_prompt_ids": {"English": [151644, 8948]},
+    "text_start_token_id": 151704,
+    "tokenizer_type": "byte-level",
+    "normalize_waveform": false
+}
+```
+
+The prompt token ids are encoded at export time with the Hugging Face tokenizer,
+so the package needs no tokenizer at runtime. `prompt_prefix_ids` ends with the
+audio start token and `prompt_suffix_ids` starts with the audio end token; the
+audio embeddings go between them. `language_prompt_ids` and `language_suffix_ids`
+are optional and give one prefix (or suffix) per language for the `language`
+argument: Qwen3-ASR puts the language marker before the audio, Voxtral puts it
+after. `text_start_token_id` is also
+optional: some models write a preamble before the transcription (Qwen3-ASR
+writes the detected language), and the runtime drops everything up to and
+including that marker token.
+
+Two more optional keys cover the differences between model families:
+
+* `tokenizer_type` is `"byte-level"` (default) or `"sentencepiece"`.
+* `normalize_waveform` scales the waveform to zero mean and unit variance before
+  the feature extractor. SLAM-ASR models need this.
+
+For detokenization, save the tokenizer vocabulary as `vocab.json` (a
+`{token: id}` map). Byte-level BPE tokens are decoded with the standard GPT-2
+byte table, the same way as for Whisper. SentencePiece tokens are decoded by
+replacing the space marker and resolving `<0xHH>` byte-fallback tokens.
+
+For a SLAM-ASR model the audio embeddings come before the prompt, so
+`prompt_prefix_ids` is empty and `prompt_suffix_ids` holds the whole prompt.
+
+An export script for `Qwen/Qwen3-ASR-0.6B-hf` is in the
+[issue #73 discussion](https://github.com/istupakov/onnx-asr/issues/73).
+
+Limitations:
+
+* The runtime processes one waveform at a time, so a batch is a loop.
+* Greedy decoding only.
+* Custom prompts are not supported; only the baked prompt ids.
+
+### Prompted decoding (OWSM style)
+
+By default `espnet-aed` starts decoding from `<sos/eos>` and stops at `<sos/eos>`. Models
+of the OWSM family, such as `DataoceanAI/dolphin-small`, start from `<sos>`, stop at
+`<eos>` and put a task prompt in between. Four keys in `config.json` describe that:
+
+```json
+{
+    "sos_token": "<sos>",
+    "eos_token": "<eos>",
+    "prompt_tokens": ["{language}", "{region}", "<asr>", "<notimestamp>"],
+    "languages": ["zh-CN", "zh-TW", "ja-JP"],
+    "language_aliases": { "zh": "zh-CN", "ja": "ja-JP" },
+    "default_language": "zh-CN"
+}
+```
+
+`prompt_tokens` holds one entry per decode step after the start token. An entry is a
+vocabulary token, which the runtime forces, or one of the placeholders `{language}` and
+`{region}`, which `recognize(..., language=...)` fills in. `language` accepts a full tag
+(`zh-CN`), the same tag with an underscore (`zh_CN`) or a bare language (`zh`), which
+`language_aliases` maps to a full tag. A placeholder with nothing to fill it in stays
+free and the model predicts that slot itself, the same way the Dolphin code predicts the
+language and the region when the caller gives neither. The prompt tokens never reach the
+transcript.
+
+Leave all four keys out and the model decodes `<sos/eos>` to `<sos/eos>` as before.
+
+### ESPnet `default` frontend in the graph
+
+`DataoceanAI/dolphin-small` uses the ESPnet `default` frontend (STFT 512/400/160 plus 80
+log-mel) and `global_mvn`, which no onnx-asr preprocessor computes. Put the frontend in
+the encoder graph, take the waveform as `features` and declare
+`"preprocessor": "identity"`.
+
+`torch.stft` does not convert, so build the STFT as a strided `conv1d` over a DFT basis
+windowed by the same padded Hann window that `torch.stft` builds internally: pad the
+waveform by `n_fft // 2` on both sides in `reflect` mode, then convolve with a
+`(2 * (n_fft // 2 + 1), 1, n_fft)` kernel of windowed cosines and negated sines, stride
+`hop_length`. The power spectrum is the sum of the squares of the two halves. The rest
+(librosa mel matrix, `clamp(1e-10)`, `log`, masking of the padded frames) converts as
+written. Against the native frontend the largest difference is 2.5e-4 on a log-mel value
+of -21, which is float32 DFT-against-FFT noise in near-silent bins; the largest relative
+difference on the same clip is 1.2e-5.
+
+Do **not** trim the waveform to `features_lens.max()` here. The frame count comes from
+the sample count, and an unbacked symbolic length makes `torch.export` fail on the
+`max_len > 0` guard inside `make_pad_mask`.
+
+Quantize with `op_types_to_quantize=["MatMul"]` and exclude the mel projection of the
+frontend (`nodes_to_exclude=["node_matmul"]`). The STFT `Conv` and the mel `MatMul` run
+over a power spectrum that spans ten orders of magnitude, and int8 weights there destroy
+the features: the model then transcribes every clip as the same short phrase.
+
+An export of `DataoceanAI/dolphin-small` is at
+[OpenVoiceOS/dolphin-small-onnx](https://huggingface.co/OpenVoiceOS/dolphin-small-onnx).
+
+## Granite Speech NAR (CTC encoder + bidirectional editor)
+
+`ibm-granite/granite-speech-4.1-2b-nar` does not decode token by token. A conformer
+encoder with a BPE CTC head writes a first-pass hypothesis, and a bidirectional
+Granite language model rewrites that hypothesis in **one** forward pass. There is no
+KV cache and no loop, so the export has two graphs:
+
+| File | Inputs | Outputs |
+| --- | --- | --- |
+| `encoder.onnx` | `input_features` `(1, N)` raw 16 kHz waveform | `audio_embeds` `(1, L, hidden)`, `ctc_logits` `(1, C, vocab)`, `audio_embeds_lens` `(1,)`, `ctc_lens` `(1,)` |
+| `editor.onnx` | `audio_embeds` `(1, L, hidden)`, `text_ids` `(1, T)` | `logits` `(1, T, vocab)` |
+
+`encoder.onnx` holds the whole audio path: feature extraction, the conformer, the
+CTC head and the Q-Former projector. It takes the raw waveform, so `config.json`
+declares `"preprocessor": "identity"`.
+
+`editor.onnx` holds the token embedding table, which is tied to the output head, so
+its text input is token ids and not embeddings. The attention is bidirectional and
+the runtime never pads, so the graph needs no attention mask.
+
+Between the two graphs the runtime does three things in NumPy:
+
+1. **CTC greedy collapse** of `ctc_logits`: argmax, merge repeated ids, then drop
+   the blanks. Merging before dropping is what lets a doubled letter survive.
+2. **Slot insertion**: put a blank before, after and between every surviving token,
+   so `[a, b]` becomes `[_, a, _, b, _]`, padded up to `min_edit_sequence_length`.
+   Each blank is a slot the editor may fill, and each hypothesis token is a slot the
+   editor may keep or delete.
+3. **A second CTC collapse** over the editor logits, then byte-level BPE decoding.
+
+Add a `config.json`:
+
+```json
+{
+    "model_type": "granite-nar",
+    "preprocessor": "identity",
+    "blank_token_id": 100257,
+    "min_edit_sequence_length": 8
+}
+```
+
+For detokenization, save the tokenizer vocabulary as `vocab.json` (a `{token: id}`
+map), decoded with the standard GPT-2 byte table, the same way as for Whisper.
+
+An export of `ibm-granite/granite-speech-4.1-2b-nar` is at
+[OpenVoiceOS/granite-speech-4.1-2b-nar-onnx](https://huggingface.co/OpenVoiceOS/granite-speech-4.1-2b-nar-onnx).
+
+Limitations:
+
+* The runtime processes one waveform at a time, so a batch is a loop.
+* Greedy decoding only, and no timestamps.
+* Transcription only. The model card lists en, fr, de, es and pt.
+
+## Meta Omnilingual ASR CTC
+
+[Omnilingual ASR](https://github.com/facebookresearch/omnilingual-asr) is a wav2vec2
+encoder with a CTC head that Meta released under Apache-2.0 for more than 1600
+languages. For many of them it is the first available speech recognition model.
+
+The graph needs no conversion work here: the
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) project publishes exports that
+already match the contract of this package.
+
+Graph contract:
+
+| Item | Value |
+|---|---|
+| Input | `x`, float32, `[batch, num_samples]`, raw 16 kHz waveform |
+| Output | `logits`, float32, `[batch, num_frames, vocab_size]`, unnormalized |
+| Preprocessor | `identity` — the convolutional feature extractor is in the graph |
+| Subsampling factor | 320 (one frame per 20 ms) |
+| Vocabulary | `tokens.txt`, one shared vocabulary for every language |
+| Blank | index 0, the `<s>` token |
+| Language selection | none — the CTC models are not language-conditioned |
+
+The vocabulary holds real spaces, not the `▁` marker, so a line of `tokens.txt` can
+be a space followed by its index. The reader splits from the right, and the decoder
+joins the tokens without substitution.
+
+Write `config.json` next to the model:
+
+```json
+{
+    "model_type": "omnilingual-ctc",
+    "subsampling_factor": 320
+}
+```
+
+If the export keeps its weights in a separate file, rename that file to
+`model.onnx.data` and patch the `location` field of every external tensor, so the
+resolver downloads it with the graph:
+
+```py
+import onnx
+
+model = onnx.load("model.onnx", load_external_data=False)
+for tensor in model.graph.initializer:
+    for entry in tensor.external_data:
+        if entry.key == "location":
+            entry.value = "model.onnx.data"
+onnx.save(model, "out/model.onnx")
+```
+
+An export of `omniASR_CTC_1B_v2` is at
+[OpenVoiceOS/omnilingual-asr-ctc-1b-onnx](https://huggingface.co/OpenVoiceOS/omnilingual-asr-ctc-1b-onnx).
+
+Limitations:
+
+* The graph takes no length input, so a padded batch decodes its tail from the
+  padding. The frame count trims the result, but one waveform at a time is safer.
+* Upstream accepts audio shorter than 40 seconds. Use a VAD for longer audio.
+* The models write no punctuation and no capitalization for most languages.
+
+## FunASR Paraformer
+
+[Paraformer](https://github.com/modelscope/FunASR) is the Alibaba offline
+non-autoregressive recognizer: a SAN-M encoder, a CIF predictor that decides how many
+tokens the utterance has, and a single pass decoder that emits all of them at once.
+There is no decoding loop and no blank symbol, so this is not a CTC model.
+
+The graphs need no conversion work here: the
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) project publishes exports that
+this package uses byte for byte.
+
+Graph contract:
+
+| Item | Value |
+|---|---|
+| Input | `speech`, float32, `[batch, num_frames, 560]`, FunASR frontend output |
+| Input | `speech_lengths`, int32, `[batch]` |
+| Output | `logits`, float32, `[batch, num_tokens, vocab_size]`, unnormalized |
+| Output | `token_num`, int32, `[batch]`, the CIF token count |
+| Preprocessor | `wespeaker` — a plain kaldi fbank of an int16 scaled waveform |
+| Subsampling factor | 6, the LFR hop |
+| Vocabulary | `tokens.txt`, renamed to `vocab.txt` |
+| End of sequence | the `</s>` token |
+
+The 560 dim input is the FunASR `WavFrontend` output: an 80 dim kaldi fbank, then a low
+frame rate stack of 7 frames with a hop of 6, then the `am.mvn` mean variance
+statistics. The `wespeaker` preprocessor already computes the fbank, so the runtime
+adds only the LFR stack and the CMVN, with the statistics in `config.json`.
+
+Two details are easy to get wrong and are quiet when wrong:
+
+* The fbank runs on a waveform scaled to the **int16** range. `log(max(x, eps))` floors
+  low energy mel bins at a different point on a unit scale waveform, and the CMVN
+  cannot absorb the difference.
+* The FunASR LFR **left pads** 3 copies of the first frame and pads the tail with the
+  last frame, giving `ceil(num_frames / 6)` output frames. The sherpa-onnx runtime
+  instead drops the tail. Both decode most audio the same way, but only the first
+  reproduces native FunASR.
+
+Decoding is one argmax per logits row. It stops at `</s>`, and never reads past
+`token_num`, which matters for a batch, where the shorter items are padded up to the
+longest token count.
+
+Take the CMVN statistics from the graph metadata, which is also what `am.mvn` holds,
+and write `config.json` next to the model:
+
+```py
+import json
+
+import onnxruntime as rt
+
+meta = rt.InferenceSession("model.onnx").get_modelmeta().custom_metadata_map
+config = {
+    "model_type": "paraformer",
+    "preprocessor": "wespeaker",
+    "subsampling_factor": 6,
+    "waveform_scale": 1 << 15,
+    "lfr_window_size": int(meta["lfr_window_size"]),
+    "lfr_window_shift": int(meta["lfr_window_shift"]),
+    "neg_mean": [float(v) for v in meta["neg_mean"].split(",")],
+    "inv_stddev": [float(v) for v in meta["inv_stddev"].split(",")],
+}
+with open("config.json", "wt") as f:
+    json.dump(config, f)
+```
+
+The streaming Paraformer models use a different graph with encoder and decoder states
+and need a streaming runtime, so they are out of scope here.

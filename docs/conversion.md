@@ -175,6 +175,192 @@ word-delimiter token (`|`) becomes `▁`, which onnx-asr converts to a literal s
 when decoding. `subsampling_factor` is the product of the feature-encoder conv strides
 (320 for the standard wav2vec2/XLS-R conv stack) and is only used to scale token
 timestamps.
+## HuggingFace Wav2Vec2 with per-language adapters
+
+`facebook/mms-1b-all` is one 1B-parameter base with a small attention adapter and a
+CTC head per language, for more than a thousand languages. A merged export per
+language costs 3.6 GB every time. The `wav2vec2-adapters` model type keeps the base
+shared: the adapter layers and the CTC head are **graph inputs**, not initializers,
+so one session serves every language and a language costs only its pack.
+
+### Model layout
+
+```text
+model.onnx            shared base, language tensors exposed as inputs
+config.json           {"model_type": "wav2vec2-adapters", ...}
+adapters/<iso>.npz    one array per language-dependent graph input, plus vocab_size
+vocabs/<iso>.txt      onnx-asr vocabulary for that language
+```
+
+### Graph contract
+
+| Input | Shape | Note |
+| --- | --- | --- |
+| `input_values` | `[batch, time]` | raw waveform, 16 kHz |
+| `input_lengths` | `[batch]` | sample count per item |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.norm.weight` | `[hidden]` | one set per encoder layer |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.norm.bias` | `[hidden]` | |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.linear_1.weight` | `[adapter_dim, hidden]` | |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.linear_1.bias` | `[adapter_dim]` | |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.linear_2.weight` | `[hidden, adapter_dim]` | |
+| `wav2vec2.encoder.layers.<i>.adapter_layer.linear_2.bias` | `[hidden]` | |
+| `lm_head.weight` | `[vocab, hidden]` | `vocab` is a dynamic dimension |
+| `lm_head.bias` | `[vocab]` | |
+
+The only output is `logprobs` with shape `[batch, frames, vocab]`.
+
+The `.npz` key names must match the graph input names. `vocab_size` is an extra key
+that holds the true vocabulary size; onnx-asr trims the logits to it, so a base graph
+with a padded head still decodes correctly.
+
+### Export
+
+Detach the language-dependent parameters from the modules and set them from the
+forward arguments, so the tracer sees them as graph inputs. The stateless API
+(`torch.func.functional_call`) does not work here, because the exporter traces the
+module:
+
+```py
+import torch
+from transformers import Wav2Vec2ForCTC
+
+model = Wav2Vec2ForCTC.from_pretrained("facebook/mms-1b-all", target_lang="eng",
+                                       ignore_mismatched_sizes=True).eval()
+keys = sorted(n for n, _ in model.named_parameters() if ".adapter_layer." in n)
+keys += ["lm_head.weight", "lm_head.bias"]
+
+
+state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+model.requires_grad_(False)
+
+slots = []
+for key in keys:
+    parent = model.get_submodule(key.rsplit(".", 1)[0])
+    leaf = key.rsplit(".", 1)[1]
+    del parent._parameters[leaf]
+    setattr(parent, leaf, None)
+    slots.append((parent, leaf))
+
+
+class AdapterFed(torch.nn.Module):
+    def forward(self, input_values, input_lengths, *tensors):
+        for (parent, leaf), value in zip(slots, tensors, strict=True):
+            setattr(parent, leaf, value)
+        logits = model(input_values).logits
+        return torch.nn.functional.log_softmax(logits, dim=-1)
+
+
+tensors = tuple(state[k] for k in keys)
+torch.onnx.export(
+    AdapterFed(),
+    (torch.randn(1, 16000), torch.tensor([16000], dtype=torch.int64), *tensors),
+    "model.onnx",
+    input_names=["input_values", "input_lengths", *keys],
+    output_names=["logprobs"],
+    dynamic_axes={
+        "input_values": {0: "batch", 1: "time"},
+        "input_lengths": {0: "batch"},
+        "logprobs": {0: "batch", 1: "frames", 2: "vocab"},
+        "lm_head.weight": {0: "vocab"},
+        "lm_head.bias": {0: "vocab"},
+    },
+    opset_version=18,
+)
+```
+
+Then, for each language, `model.load_adapter(iso)` and save the same keys to
+`adapters/<iso>.npz` with the language's `vocab_size`, and write `vocabs/<iso>.txt`
+in the format described in [Wav2Vec2 CTC](#huggingface-wav2vec2-ctc).
+
+### Usage
+
+```py
+import onnx_asr
+
+model = onnx_asr.load_model("wav2vec2-adapters", "mms-1b-all-onnx")
+print(model.asr.languages)
+print(model.recognize("test.wav", language="lg"))
+```
+
+`language` takes the pack name (`lug`), a BCP-47 tag whose primary subtag is a pack
+name (`lg-UG`), or an alias from `language_aliases` in `config.json`. Without
+`language`, the model uses `default_language`. An unknown language raises an error
+that lists the languages the model has.
+
+Feature normalization is baked into the graph, so the model uses the `identity`
+preprocessor.
+
+## Speech-LLM (audio encoder + projector + causal LM)
+
+Models in this family transcribe with a causal language model that receives audio
+embeddings, for example Qwen3-ASR, SLAM-ASR and Cohere Transcribe. The export has
+three graphs:
+
+| File | Inputs | Outputs |
+| --- | --- | --- |
+| `encoder.onnx` | `input_features` `(1, mel, frames)`, and, for windowed encoders, `valid_indices` `(L,)` and `attn_bias` `(1, 1, L, L)` | `audio_embeds` `(1, L, hidden)` |
+| `embed_tokens.onnx` | `input_ids` `(1, S)` | `inputs_embeds` `(1, S, hidden)` |
+| `decoder.onnx` | `inputs_embeds` `(1, S, hidden)`, `attn_bias` `(1, 1, S, P + S)`, `position_ids` `(1, S)`, `past_key_values.{i}.{key,value}` `(1, kv_heads, P, head_dim)` | `logits` `(1, S, vocab)`, `present.{i}.{key,value}` `(1, kv_heads, P + S, head_dim)` |
+
+`encoder.onnx` must include the projector, so its output is already in the
+embedding space of the language model. `attn_bias` is an additive float mask, so
+the runtime controls the attention pattern and the graphs need no branches. The
+audio encoder of Qwen3-ASR attends inside fixed windows, and the runtime builds
+that block-diagonal mask in NumPy. An encoder that attends over the whole fixed
+feature length, like a Whisper encoder, declares only `input_features`, and the
+runtime then sends the features unchanged.
+
+Add a `config.json`:
+
+```json
+{
+    "model_type": "speech-llm",
+    "features_size": 128,
+    "preprocessor": "whisper128",
+    "n_window": 50,
+    "n_window_infer": 800,
+    "eos_token_ids": [151643, 151645],
+    "max_sequence_length": 512,
+    "prompt_prefix_ids": [151644, 8948],
+    "prompt_suffix_ids": [151645, 198],
+    "language_prompt_ids": {"English": [151644, 8948]},
+    "text_start_token_id": 151704,
+    "tokenizer_type": "byte-level",
+    "normalize_waveform": false
+}
+```
+
+The prompt token ids are encoded at export time with the Hugging Face tokenizer,
+so the package needs no tokenizer at runtime. `prompt_prefix_ids` ends with the
+audio start token and `prompt_suffix_ids` starts with the audio end token; the
+audio embeddings go between them. `language_prompt_ids` is optional and gives one
+prefix per language for the `language` argument. `text_start_token_id` is also
+optional: some models write a preamble before the transcription (Qwen3-ASR
+writes the detected language), and the runtime drops everything up to and
+including that marker token.
+
+Two more optional keys cover the differences between model families:
+
+* `tokenizer_type` is `"byte-level"` (default) or `"sentencepiece"`.
+* `normalize_waveform` scales the waveform to zero mean and unit variance before
+  the feature extractor. SLAM-ASR models need this.
+
+For detokenization, save the tokenizer vocabulary as `vocab.json` (a
+`{token: id}` map). Byte-level BPE tokens are decoded with the standard GPT-2
+byte table, the same way as for Whisper. SentencePiece tokens are decoded by
+replacing the space marker and resolving `<0xHH>` byte-fallback tokens.
+
+For a SLAM-ASR model the audio embeddings come before the prompt, so
+`prompt_prefix_ids` is empty and `prompt_suffix_ids` holds the whole prompt.
+
+An export script for `Qwen/Qwen3-ASR-0.6B-hf` is in the
+[issue #73 discussion](https://github.com/istupakov/onnx-asr/issues/73).
+
+Limitations:
+
+* The runtime processes one waveform at a time, so a batch is a loop.
+* Greedy decoding only.
+* Custom prompts are not supported; only the baked prompt ids.
 
 ## ESPnet E-Branchformer (CTC and attention decoder)
 

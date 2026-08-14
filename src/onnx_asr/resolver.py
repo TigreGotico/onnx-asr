@@ -30,6 +30,8 @@ model_repos = {
     "nemo-parakeet-tdt-0.6b-v3": "istupakov/parakeet-tdt-0.6b-v3-onnx",
     "nemo-canary-1b-v2": "istupakov/canary-1b-v2-onnx",
     "whisper-base": "istupakov/whisper-base-onnx",
+    "moonshine-tiny": "onnx-community/moonshine-tiny-ONNX",
+    "moonshine-base": "onnx-community/moonshine-base-ONNX",
     "silero": "istupakov/silero-vad-onnx",
 }
 

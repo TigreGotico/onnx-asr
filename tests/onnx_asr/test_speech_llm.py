@@ -388,7 +388,12 @@ def voxtral_model(tmp_path: Path) -> SpeechLlm:
 def test_language_suffix_ids(voxtral_model: SpeechLlm, language: str | None, expected_suffix: list[int]) -> None:
     seen: list[list[int]] = []
     embed = voxtral_model._embed
-    voxtral_model._embed = lambda ids: (seen.append(ids), embed(ids))[1]
+
+    def _tracking_embed(ids: list[int]) -> npt.NDArray[np.float32]:
+        seen.append(ids)
+        return embed(ids)
+
+    voxtral_model._embed = _tracking_embed  # type: ignore[method-assign,assignment]
 
     samples = int(AUDIO_SECONDS * 16_000)
     results = list(

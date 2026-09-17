@@ -120,7 +120,8 @@ class _AsrWithDecoding(BaseAsr):
         if "vocab" in model_files:
             with Path(model_files["vocab"]).open("rt", encoding="utf-8") as f:
                 self._vocab = {
-                    int(id): token.replace("\u2581", " ") for token, id in (line.strip("\n").split(" ") for line in f)
+                    int(id): token.replace("\u2581", " ")
+                    for token, id in (line.rstrip("\n").rsplit(" ", 1) for line in f if line.rstrip("\n"))
                 }
             self._vocab_size = len(self._vocab)
             if (blank_idx := next((id for id, token in self._vocab.items() if token == "<blk>"), None)) is not None:

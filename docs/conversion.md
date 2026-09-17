@@ -100,33 +100,45 @@ optimum-cli export onnx --model openai/whisper-base ./whisper-onnx
 
 ## HuggingFace Wav2Vec2 CTC
 
-Install **transformers** and **torch**:
+Install **transformers**, **torch** and **onnx**:
 
 ```sh
-pip install transformers torch
+pip install transformers torch onnx
 ```
 
 Export the model with feature normalization (`do_normalize`) baked into the graph, so
 the model uses the plain `"identity"` preprocessor (raw waveform in, no separate
-feature-extractor asset needed):
+feature-extractor asset needed). The same script exports WavLM and SEW CTC checkpoints,
+because `AutoModelForCTC` resolves the architecture from the checkpoint:
 
 ```py
 import json
 from pathlib import Path
 
+import onnx
 import torch
-from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
+from transformers import AutoFeatureExtractor, AutoModelForCTC, Wav2Vec2CTCTokenizer
 
 hf_model_id = "proxectonos/Nos_ASR-wav2vec2-xls-r-300m-gl"
 onnx_dir = Path("wav2vec2-onnx")
 onnx_dir.mkdir(exist_ok=True)
 
-model = Wav2Vec2ForCTC.from_pretrained(hf_model_id).eval()
-processor = Wav2Vec2Processor.from_pretrained(hf_model_id)
-do_normalize = bool(processor.feature_extractor.do_normalize)
+model = AutoModelForCTC.from_pretrained(hf_model_id).eval()
+# Not AutoProcessor: a checkpoint that ships an n-gram language model resolves to
+# Wav2Vec2ProcessorWithLM, which imports pyctcdecode. The export needs only the
+# feature extractor and the CTC vocabulary.
+feature_extractor = AutoFeatureExtractor.from_pretrained(hf_model_id)
+tokenizer = Wav2Vec2CTCTokenizer.from_pretrained(hf_model_id)
+do_normalize = bool(feature_extractor.do_normalize)
 
 
 class NormalizedWav2Vec2(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        # The model is a submodule. A module-level reference fails under torch 2.14
+        # with "Cannot insert a Tensor that requires grad as a constant".
+        self.model = model
+
     def forward(self, input_values, input_lengths):
         if do_normalize:
             mask = torch.arange(input_values.shape[1])[None, :] < input_lengths[:, None]
@@ -134,12 +146,13 @@ class NormalizedWav2Vec2(torch.nn.Module):
             mean = (input_values * mask).sum(dim=1, keepdim=True) / count
             var = (((input_values - mean) * mask) ** 2).sum(dim=1, keepdim=True) / count
             input_values = torch.where(mask, (input_values - mean) / torch.sqrt(var + 1e-5), input_values)
-        logits = model(input_values).logits
+        logits = self.model(input_values).logits
         return torch.nn.functional.log_softmax(logits, dim=-1)
 
 
+torch.set_grad_enabled(False)
 torch.onnx.export(
-    NormalizedWav2Vec2(),
+    NormalizedWav2Vec2().eval(),
     (torch.randn(1, 16000), torch.tensor([16000], dtype=torch.int64)),
     str(onnx_dir / "model.onnx"),
     input_names=["input_values", "input_lengths"],
@@ -150,11 +163,28 @@ torch.onnx.export(
         "logprobs": {0: "batch", 1: "frames"},
     },
     opset_version=18,
+    dynamo=False,
 )
 
-vocab = processor.tokenizer.get_vocab()
-pad_token = processor.tokenizer.pad_token
-word_delimiter = processor.tokenizer.word_delimiter_token
+# A graph over 2 GB (the XLS-R 1B checkpoints) is written with one external file per
+# tensor. Rewrite it as model.onnx plus one model.onnx.data.
+tensor_files = [p for p in onnx_dir.iterdir() if p.name != "model.onnx"]
+if tensor_files:
+    proto = onnx.load(str(onnx_dir / "model.onnx"))
+    for p in tensor_files:
+        p.unlink()
+    onnx.save_model(
+        proto,
+        str(onnx_dir / "model.onnx"),
+        save_as_external_data=True,
+        all_tensors_to_one_file=True,
+        location="model.onnx.data",
+        size_threshold=0,
+    )
+
+vocab = tokenizer.get_vocab()
+pad_token = tokenizer.pad_token
+word_delimiter = tokenizer.word_delimiter_token
 
 with (onnx_dir / "vocab.txt").open("wt") as f:
     for token, idx in sorted(vocab.items(), key=lambda kv: kv[1]):
@@ -162,7 +192,7 @@ with (onnx_dir / "vocab.txt").open("wt") as f:
         f.write(f"{token} {idx}\n")
 
 subsampling_factor = 1
-for layer in model.wav2vec2.feature_extractor.conv_layers:
+for layer in model.base_model.feature_extractor.conv_layers:
     stride = layer.conv.stride
     subsampling_factor *= stride[0] if isinstance(stride, tuple) else stride
 
@@ -175,3 +205,7 @@ word-delimiter token (`|`) becomes `▁`, which onnx-asr converts to a literal s
 when decoding. `subsampling_factor` is the product of the feature-encoder conv strides
 (320 for the standard wav2vec2/XLS-R conv stack) and is only used to scale token
 timestamps.
+
+The exported graph decodes greedily. A language model shipped next to the checkpoint
+(`language_model/`, read by `Wav2Vec2ProcessorWithLM`) is not part of the export, so a
+parity check against PyTorch must use greedy decoding on both sides.

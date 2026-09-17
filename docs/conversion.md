@@ -175,3 +175,37 @@ word-delimiter token (`|`) becomes `▁`, which onnx-asr converts to a literal s
 when decoding. `subsampling_factor` is the product of the feature-encoder conv strides
 (320 for the standard wav2vec2/XLS-R conv stack) and is only used to scale token
 timestamps.
+## Wav2Vec2 CTC with raw logits
+
+Some tool chains, among them fairseq2 and the sherpa-onnx exporters, publish a
+Wav2Vec2 CTC model in a different shape: one input `x` with the raw waveform, one
+output `logits` without `log_softmax`, and a `tokens.txt` vocabulary instead of
+`vocab.txt`. Use the model type `wav2vec2-ctc-logits` for these. It reads the model
+as published; you do not have to export it again.
+
+The model directory needs a `config.json`:
+
+```json
+{
+  "model_type": "wav2vec2-ctc-logits",
+  "subsampling_factor": 320,
+  "normalize_audio": true,
+  "blank_token": "<pad>"
+}
+```
+
+* `subsampling_factor` is the product of the feature-encoder conv strides (320 for the
+  standard wav2vec2/XLS-R conv stack) and only scales token timestamps.
+* `normalize_audio` applies per-utterance zero mean and unit variance to the waveform
+  before the model runs. Most of these exports expect it, so it is on by default. Set
+  it to `false` if the normalisation is already inside the graph.
+* `blank_token` is the vocabulary entry that holds the CTC blank. The default is
+  `<pad>`. fairseq-derived models often use `<s>` instead. Read a short clip and look
+  at the output: if one token is repeated between every other token, that token is the
+  blank.
+
+`tokens.txt` holds one `token id` pair per line, the same format as `vocab.txt`. A
+token that is a literal space is allowed.
+
+These models keep no attention mask, so the encoder can collapse on long input. Split
+long audio into windows of about 6 seconds, or use a VAD.

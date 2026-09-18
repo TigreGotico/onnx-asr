@@ -9,13 +9,21 @@ import onnxruntime as rt
 
 from onnx_asr.adapters import SeAdapter, TextResultsAsrAdapter
 from onnx_asr.asr import Asr, Preprocessor
+from onnx_asr.models.espnet import EspnetAED, EspnetCtc
 from onnx_asr.models.gigaam import GigaamMultilingualCtc, GigaamV2Ctc, GigaamV2Rnnt, GigaamV3E2eCtc, GigaamV3E2eRnnt
+from onnx_asr.models.granite_nar import GraniteNar
 from onnx_asr.models.kaldi import KaldiTransducer
+from onnx_asr.models.moonshine import Moonshine
 from onnx_asr.models.nemo import NemoConformerAED, NemoConformerCtc, NemoConformerRnnt, NemoConformerTdt
+from onnx_asr.models.omnilingual import OmnilingualCtc
+from onnx_asr.models.paraformer import Paraformer
 from onnx_asr.models.pyannote import PyAnnoteVad
+from onnx_asr.models.sensevoice import SenseVoice
 from onnx_asr.models.silero import SileroVad
+from onnx_asr.models.speech_llm import SpeechLlm
 from onnx_asr.models.tone import TOneCtc
 from onnx_asr.models.wav2vec2 import Wav2Vec2Ctc
+from onnx_asr.models.wav2vec2_adapters import Wav2Vec2Adapters
 from onnx_asr.models.wespeaker import WespeakerEmbeddings
 from onnx_asr.models.whisper import WhisperHf, WhisperOrt
 from onnx_asr.onnx import OnnxSessionOptions, Provider, TensorRtOptions, get_onnx_providers, update_onnx_providers
@@ -23,6 +31,7 @@ from onnx_asr.preprocessors.numpy_preprocessor import (
     GigaamPreprocessorNumpy,
     KaldiPreprocessorNumpy,
     NemoPreprocessorNumpy,
+    W2vBertPreprocessorNumpy,
     WhisperPreprocessorNumpy,
 )
 from onnx_asr.preprocessors.preprocessor import ConcurrentPreprocessor, IdentityPreprocessor, OnnxPreprocessor
@@ -54,17 +63,28 @@ AsrNames = Literal[
     "alphacep/vosk-model-small-ru",
     "t-tech/t-one",
     "whisper-base",
+    "moonshine-tiny",
+    "moonshine-base",
 ]
 """Supported ASR model names (can be automatically downloaded from the Hugging Face)."""
 
 AsrTypeNames = Literal[
+    "espnet-aed",
+    "espnet-ctc",
+    "granite-nar",
     "kaldi-rnnt",
     "nemo-conformer-ctc",
     "nemo-conformer-rnnt",
     "nemo-conformer-tdt",
     "nemo-conformer-aed",
+    "omnilingual-ctc",
+    "paraformer",
+    "sensevoice",
+    "speech-llm",
+    "moonshine",
     "t-one-ctc",
     "vosk",
+    "wav2vec2-adapters",
     "wav2vec2-ctc",
     "whisper-ort",
     "whisper",
@@ -78,14 +98,23 @@ VadTypeNames = Literal["pyannote"]
 """Supported VAD model types."""
 
 AsrTypes: TypeAlias = (
-    GigaamV2Ctc
+    EspnetAED
+    | EspnetCtc
+    | GigaamV2Ctc
     | GigaamV2Rnnt
+    | GraniteNar
     | KaldiTransducer
+    | Moonshine
     | NemoConformerCtc
     | NemoConformerRnnt
     | NemoConformerAED
+    | OmnilingualCtc
+    | Paraformer
+    | SenseVoice
+    | SpeechLlm
     | TOneCtc
     | Wav2Vec2Ctc
+    | Wav2Vec2Adapters
     | WhisperHf
     | WhisperOrt
 )
@@ -112,13 +141,24 @@ def create_asr_resolver(
         "nemo-parakeet-tdt-0.6b-v3": NemoConformerTdt,
         "nemo-canary-1b-v2": NemoConformerAED,
         "whisper-base": WhisperOrt,
+        "espnet-aed": EspnetAED,
+        "espnet-ctc": EspnetCtc,
+        "granite-nar": GraniteNar,
+        "moonshine-tiny": Moonshine,
+        "moonshine-base": Moonshine,
         "kaldi-rnnt": KaldiTransducer,
         "nemo-conformer-ctc": NemoConformerCtc,
         "nemo-conformer-rnnt": NemoConformerRnnt,
         "nemo-conformer-tdt": NemoConformerTdt,
         "nemo-conformer-aed": NemoConformerAED,
+        "omnilingual-ctc": OmnilingualCtc,
+        "paraformer": Paraformer,
+        "sensevoice": SenseVoice,
+        "speech-llm": SpeechLlm,
+        "moonshine": Moonshine,
         "t-one-ctc": TOneCtc,
         "vosk": KaldiTransducer,
+        "wav2vec2-adapters": Wav2Vec2Adapters,
         "wav2vec2-ctc": Wav2Vec2Ctc,
         "whisper-ort": WhisperOrt,
         "whisper": WhisperHf,
@@ -222,7 +262,10 @@ class Manager:
             return IdentityPreprocessor()
 
         preprocessor: Preprocessor
-        if self.use_numpy_preprocessors:
+        if name == "w2vbert":
+            # There is no ONNX preprocessor graph for w2v-BERT features, always use NumPy.
+            preprocessor = W2vBertPreprocessorNumpy(name)
+        elif self.use_numpy_preprocessors:
             if name.startswith("gigaam"):
                 preprocessor = GigaamPreprocessorNumpy(name)
             elif name in ("kaldi", "wespeaker"):
@@ -266,8 +309,11 @@ class Manager:
             config = update_onnx_providers(
                 self.default_onnx_config, excluded_providers=resolver.model_type._get_excluded_providers()
             )
+        fetcher = {"fetcher": resolver.fetch} if resolver.model_type._supports_fetcher else {}
         return self._create_asr_adapter(
-            resolver.model_type(resolver.resolve_model(quantization=quantization), self._create_preprocessor, config)
+            resolver.model_type(
+                resolver.resolve_model(quantization=quantization), self._create_preprocessor, config, **fetcher
+            )
         )
 
     def create_vad(
@@ -329,6 +375,9 @@ def load_model(
                 GigaAM v3 (`gigaam-v3-ctc` | `gigaam-v3-rnnt` |
                            `gigaam-v3-e2e-ctc` | `gigaam-v3-e2e-rnnt`)
                 GigaAM Multilingual (`gigaam-multilingual-ctc` | `gigaam-multilingual-large-ctc`)
+                ESPnet E-Branchformer (`espnet-ctc` | `espnet-aed`)
+                Granite Speech NAR, CTC encoder + bidirectional editor (`granite-nar`)
+                SenseVoice, FunASR non-autoregressive CTC with rich tokens (`sensevoice`)
                 Kaldi Transducer (`kaldi-rnnt`)
                 NeMo Conformer (`nemo-conformer-ctc` | `nemo-conformer-rnnt` | `nemo-conformer-tdt` |
                                 `nemo-conformer-aed`)
@@ -338,6 +387,11 @@ def load_model(
                                        `nemo-parakeet-tdt-0.6b-v2`)
                 NeMo Parakeet 0.6B Multilingual (`nemo-parakeet-tdt-0.6b-v3`)
                 NeMo Canary (`nemo-canary-1b-v2`)
+                Omnilingual ASR CTC, 1600+ languages (`omnilingual-ctc`)
+                Paraformer, FunASR non-autoregressive SAN-M + CIF (`paraformer`)
+                Speech-LLM, audio encoder + projector + causal LM (`speech-llm`)
+                Moonshine En (`moonshine` | `moonshine-tiny` | `moonshine-base` |
+                              `onnx-community/moonshine-*-ONNX`)
                 T-One (`t-one-ctc` | `t-tech/t-one`)
                 Vosk (`vosk` | `alphacep/vosk-model-ru` | `alphacep/vosk-model-small-ru`)
                 Wav2Vec2 CTC (`wav2vec2-ctc`)

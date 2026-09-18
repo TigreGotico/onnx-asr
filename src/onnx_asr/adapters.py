@@ -48,7 +48,9 @@ class RecognizeOptions(TypedDict, total=False):
     """Options for ASR recognition."""
 
     language: str | None
-    """Speech language (only for Whisper and Canary models)."""
+    """Speech language (only for Whisper, Canary and SenseVoice models)."""
+    use_itn: bool | None
+    """Output punctuation and digits (only for SenseVoice models)."""
     target_language: str | None
     """Output language (only for Canary models)."""
     pnc: Literal["pnc", "nopnc"] | bool

@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import onnxscript
 
-from preprocessors import gigaam, kaldi, nemo, resample, whisper
+from preprocessors import gigaam, kaldi, nemo, resample, w2vbert, whisper
 
 
 def save_onnx(
@@ -69,6 +69,7 @@ def save_fbanks(preprocessors_dir: Path) -> None:
         "nemo128": nemo.melscale_fbanks128,
         "whisper80": whisper.melscale_fbanks80,
         "whisper128": whisper.melscale_fbanks128,
+        "w2vbert": w2vbert.w2vbert_mel_banks,
     }
     np.savez_compressed(Path(preprocessors_dir, "fbanks"), allow_pickle=False, **fbanks)
 

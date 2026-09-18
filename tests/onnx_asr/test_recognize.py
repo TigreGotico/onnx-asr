@@ -19,6 +19,7 @@ models = [
     "t-tech/t-one",
     "whisper-base",
     "onnx-community/whisper-tiny",
+    "onnx-community/moonshine-tiny-ONNX",
     pytest.param(
         "istupakov/canary-180m-flash-onnx",
         marks=pytest.mark.xfail(onnxruntime.__version__ == "1.18.1", reason="Missed Trilu ONNX operator"),
@@ -31,7 +32,7 @@ def model(request: pytest.FixtureRequest) -> TextResultsAsrAdapter:
     match request.param:
         case "t-tech/t-one":
             return onnx_asr.load_model(request.param)
-        case "onnx-community/whisper-tiny":
+        case "onnx-community/whisper-tiny" | "onnx-community/moonshine-tiny-ONNX":
             return onnx_asr.load_model(request.param, quantization="uint8")
         case _:
             return onnx_asr.load_model(request.param, quantization="int8")

@@ -175,3 +175,48 @@ word-delimiter token (`|`) becomes `▁`, which onnx-asr converts to a literal s
 when decoding. `subsampling_factor` is the product of the feature-encoder conv strides
 (320 for the standard wav2vec2/XLS-R conv stack) and is only used to scale token
 timestamps.
+
+## Useful Sensors Moonshine
+
+Install **transformers** and **optimum**:
+
+```sh
+pip install "transformers>=4.48" "optimum[exporters]" onnx
+```
+
+Export the encoder and the merged decoder with `optimum-cli`:
+
+```sh
+optimum-cli export onnx --model UsefulSensors/moonshine-base --task automatic-speech-recognition-with-past ./moonshine-onnx
+```
+
+This writes `encoder_model.onnx`, `decoder_model.onnx`, `decoder_with_past_model.onnx`
+and `decoder_model_merged.onnx`, plus `config.json` and `tokenizer.json`. onnx-asr uses
+`encoder_model.onnx`, `decoder_model_merged.onnx`, `tokenizer.json` and `config.json`,
+and finds the graphs in the export root or in an `onnx` subdirectory. The merged
+decoder comes from the export post-processing, so do not pass `--no-post-process`.
+The published `onnx-community/moonshine-{tiny,base}-ONNX` repositories are this export,
+with the quantized variants added.
+
+The graph contract is:
+
+| File | Inputs | Outputs |
+| --- | --- | --- |
+| `encoder_model.onnx` | `input_values` `(batch, samples)` | `last_hidden_state` `(batch, frames, hidden)` |
+| `decoder_model_merged.onnx` | `input_ids` `(batch, tokens)`, `encoder_hidden_states`, `use_cache_branch` `(1,)`, `past_key_values.{i}.{decoder,encoder}.{key,value}` | `logits` `(batch, tokens, vocab)`, `present.{i}.{decoder,encoder}.{key,value}` |
+
+The encoder must declare `input_values` as its only input. Moonshine reads the raw
+16 kHz waveform, there is no log-mel front end and no feature extractor asset, so
+onnx-asr runs the `identity` preprocessor and binds that one input. Check the encoder
+inputs after the export; a graph that also declares `attention_mask` is not the one
+onnx-asr loads.
+
+`config.json` needs no editing. The `model_type` of the Hugging Face config is already
+`moonshine`, and onnx-asr reads `decoder_start_token_id`, `eos_token_id` and
+`max_position_embeddings` from it.
+
+The tokenizer stays in `tokenizer.json`. onnx-asr reads `model.vocab` and
+`added_tokens` from it, decodes `<0xHH>` byte-fallback tokens, turns `▁` into a space
+and drops the added tokens, so no `vocab.txt` is needed.
+
+The published checkpoints are English only.

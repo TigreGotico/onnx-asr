@@ -39,6 +39,9 @@ class AsrConfig(TypedDict, total=False):
     subsampling_factor: int
     max_tokens_per_step: int
     max_sequence_length: int
+    decoder_start_token_id: int
+    eos_token_id: int
+    max_position_embeddings: int
 
 
 class Preprocessor(Protocol):

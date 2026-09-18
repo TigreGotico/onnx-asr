@@ -39,6 +39,10 @@ API reference: [onnx_asr.load_model][], [recognize][onnx_asr.adapters.AsrAdapter
 * `alphacep/vosk-model-small-ru` for Alpha Cephei Vosk 0.52-small-ru ([origin](https://huggingface.co/alphacep/vosk-model-small-ru))
 * `t-tech/t-one` for T-Tech T-one ([origin](https://huggingface.co/t-tech/T-one))
 * `onnx-community/whisper-tiny`, `onnx-community/whisper-base`, `onnx-community/whisper-small`, `onnx-community/whisper-large-v3-turbo`, etc. for OpenAI Whisper exported with Hugging Face optimum ([onnx-community](https://huggingface.co/onnx-community?search_models=whisper))
+* `onnx-community/moonshine-tiny-ONNX`, `onnx-community/moonshine-base-ONNX` for Useful Sensors Moonshine exported with Hugging Face optimum ([onnx-community](https://huggingface.co/onnx-community?search_models=moonshine))
+
+> [!NOTE]
+> The published Moonshine models are English only. They read the raw 16 kHz waveform instead of a log-mel spectrogram, so no preprocessor runs before the encoder.
 
 > [!WARNING]
 > Some long-ago converted `onnx-community` models have a broken `fp16` precision version.
@@ -211,6 +215,7 @@ API reference: [onnx_asr.load_model][], [recognize][onnx_asr.adapters.AsrAdapter
 * `nemo-conformer-rnnt` for NeMo Conformer/FastConformer/Parakeet with RNN-T decoder
 * `nemo-conformer-tdt` for NeMo Conformer/FastConformer/Parakeet with TDT decoder
 * `nemo-conformer-aed` for NeMo Canary with Transformer decoder
+* `moonshine` for Useful Sensors Moonshine (exported with optimum or transformers.js)
 * `t-one-ctc` for T-Tech T-one with CTC decoder
 * `wav2vec2-ctc` for HuggingFace Wav2Vec2 with CTC decoder (see [conversion](conversion.md#huggingface-wav2vec2-ctc))
 * `whisper-ort` for Whisper (exported with [onnxruntime](conversion.md#openai-whisper-with-onnxruntime-export))

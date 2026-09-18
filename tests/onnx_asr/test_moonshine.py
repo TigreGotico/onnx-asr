@@ -55,7 +55,9 @@ def _build_encoder(path: Path) -> None:
         [h.make_tensor_value_info("input_values", TensorProto.FLOAT, ["batch_size", "num_samples"])],
         [h.make_tensor_value_info("last_hidden_state", TensorProto.FLOAT, ["batch_size", 1, HIDDEN])],
     )
-    onnx.save(h.make_model(graph, opset_imports=[h.make_opsetid("", 18)]), path)
+    model = h.make_model(graph, opset_imports=[h.make_opsetid("", 18)])
+    model.ir_version = 10
+    onnx.save(model, path)
 
 
 def _build_decoder(path: Path) -> None:
@@ -113,7 +115,9 @@ def _build_decoder(path: Path) -> None:
         h.make_node("Identity", ["enc_kv"], ["present.0.encoder.value"]),
     ]
     graph = h.make_graph(nodes, "decoder", inputs, outputs)
-    onnx.save(h.make_model(graph, opset_imports=[h.make_opsetid("", 18)]), path)
+    model = h.make_model(graph, opset_imports=[h.make_opsetid("", 18)])
+    model.ir_version = 10
+    onnx.save(model, path)
 
 
 @pytest.fixture(scope="module")

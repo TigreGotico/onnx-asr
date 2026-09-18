@@ -182,12 +182,21 @@ if tensor_files:
         size_threshold=0,
     )
 
-vocab = tokenizer.get_vocab()
+# One row per output column of the model, ids 0 to vocab_size - 1, read back through
+# convert_ids_to_tokens. Not get_vocab(): a checkpoint whose tokenizer_config.json wrote
+# a special token as a dict makes the tokenizer register the dict's Python repr as a
+# token of its own, with an id past the last logit. get_vocab() returns it like any other
+# token, its text holds spaces, and onnx-asr's vocab reader then fails on the line.
+vocab_size = model.config.vocab_size
+assert model.lm_head.out_features == vocab_size
 pad_token = tokenizer.pad_token
 word_delimiter = tokenizer.word_delimiter_token
 
 with (onnx_dir / "vocab.txt").open("wt") as f:
-    for token, idx in sorted(vocab.items(), key=lambda kv: kv[1]):
+    for idx in range(vocab_size):
+        token = tokenizer.convert_ids_to_tokens(idx)
+        if " " in token or "\n" in token:
+            raise ValueError(f"id {idx} is not a token: {token!r}")
         token = "<blk>" if token == pad_token else "▁" if token == word_delimiter else token
         f.write(f"{token} {idx}\n")
 
@@ -202,7 +211,10 @@ with (onnx_dir / "config.json").open("wt") as f:
 
 The pad token becomes `<blk>` (CTC blank, auto-detected by the vocab loader) and the
 word-delimiter token (`|`) becomes `▁`, which onnx-asr converts to a literal space
-when decoding. `subsampling_factor` is the product of the feature-encoder conv strides
+when decoding. The vocabulary is written by output column, not from `get_vocab()`: some
+checkpoints (`lgris/sew-tiny-portuguese-cv` among them) register the repr of a dict-form
+special token as an extra token past the last logit, and a row with spaces in it cannot
+be read back. `subsampling_factor` is the product of the feature-encoder conv strides
 (320 for the standard wav2vec2/XLS-R conv stack) and is only used to scale token
 timestamps.
 

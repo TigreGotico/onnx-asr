@@ -43,6 +43,10 @@ API reference: [onnx_asr.load_model][], [recognize][onnx_asr.adapters.AsrAdapter
 > [!WARNING]
 > Some long-ago converted `onnx-community` models have a broken `fp16` precision version.
 
+A model kept in a subfolder of a repository is named `namespace/repo/subfolder`, for
+example `OpenVoiceOS/onnx-asr-community-w2v-ctc/lgris__bp500-xlsr`. See
+[community models](community-models.md#one-repository-one-model-per-subfolder).
+
 ## Using soundfile
 
 ```py

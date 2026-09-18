@@ -15,7 +15,7 @@ from onnx_asr.models.nemo import NemoConformerAED, NemoConformerCtc, NemoConform
 from onnx_asr.models.pyannote import PyAnnoteVad
 from onnx_asr.models.silero import SileroVad
 from onnx_asr.models.tone import TOneCtc
-from onnx_asr.models.wav2vec2 import Wav2Vec2Ctc
+from onnx_asr.models.wav2vec2 import Wav2Vec2BertCtc, Wav2Vec2Ctc
 from onnx_asr.models.wespeaker import WespeakerEmbeddings
 from onnx_asr.models.whisper import WhisperHf, WhisperOrt
 from onnx_asr.onnx import OnnxSessionOptions, Provider, TensorRtOptions, get_onnx_providers, update_onnx_providers
@@ -23,6 +23,7 @@ from onnx_asr.preprocessors.numpy_preprocessor import (
     GigaamPreprocessorNumpy,
     KaldiPreprocessorNumpy,
     NemoPreprocessorNumpy,
+    SeamlessPreprocessorNumpy,
     WhisperPreprocessorNumpy,
 )
 from onnx_asr.preprocessors.preprocessor import ConcurrentPreprocessor, IdentityPreprocessor, OnnxPreprocessor
@@ -66,6 +67,7 @@ AsrTypeNames = Literal[
     "t-one-ctc",
     "vosk",
     "wav2vec2-ctc",
+    "w2v-bert-ctc",
     "whisper-ort",
     "whisper",
 ]
@@ -86,6 +88,7 @@ AsrTypes: TypeAlias = (
     | NemoConformerAED
     | TOneCtc
     | Wav2Vec2Ctc
+    | Wav2Vec2BertCtc
     | WhisperHf
     | WhisperOrt
 )
@@ -120,6 +123,7 @@ def create_asr_resolver(
         "t-one-ctc": TOneCtc,
         "vosk": KaldiTransducer,
         "wav2vec2-ctc": Wav2Vec2Ctc,
+        "w2v-bert-ctc": Wav2Vec2BertCtc,
         "whisper-ort": WhisperOrt,
         "whisper": WhisperHf,
         "alphacep/vosk-model-ru": KaldiTransducer,
@@ -227,13 +231,15 @@ class Manager:
                 preprocessor = GigaamPreprocessorNumpy(name)
             elif name in ("kaldi", "wespeaker"):
                 preprocessor = KaldiPreprocessorNumpy(name)
+            elif name == "seamless":
+                preprocessor = SeamlessPreprocessorNumpy(name)
             elif name.startswith("nemo"):
                 preprocessor = NemoPreprocessorNumpy(name)
             elif name.startswith("whisper"):
                 preprocessor = WhisperPreprocessorNumpy(name)
             else:
                 raise ModelNotSupportedError(name)
-        elif self.use_conv_preprocessors and name != "wespeaker":
+        elif self.use_conv_preprocessors and name not in ("wespeaker", "seamless"):
             preprocessor = OnnxPreprocessor(f"{name}_conv", self.preprocessor_config)
         else:
             preprocessor = OnnxPreprocessor(name, self.preprocessor_config)

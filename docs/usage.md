@@ -213,5 +213,6 @@ API reference: [onnx_asr.load_model][], [recognize][onnx_asr.adapters.AsrAdapter
 * `nemo-conformer-aed` for NeMo Canary with Transformer decoder
 * `t-one-ctc` for T-Tech T-one with CTC decoder
 * `wav2vec2-ctc` for HuggingFace Wav2Vec2 with CTC decoder (see [conversion](conversion.md#huggingface-wav2vec2-ctc))
+* `w2v-bert-ctc` for a HuggingFace w2v-BERT 2.0 graph that takes fbank `input_features` (see [conversion](conversion.md#huggingface-w2v-bert-20-ctc-pre-built-graphs))
 * `whisper-ort` for Whisper (exported with [onnxruntime](conversion.md#openai-whisper-with-onnxruntime-export))
 * `whisper` for Whisper (exported with [optimum](conversion.md#openai-whisper-with-optimum-export))

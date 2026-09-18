@@ -9,6 +9,7 @@ import onnxruntime as rt
 
 from onnx_asr.adapters import SeAdapter, TextResultsAsrAdapter
 from onnx_asr.asr import Asr, Preprocessor
+from onnx_asr.models.espnet import EspnetAED, EspnetCtc
 from onnx_asr.models.gigaam import GigaamMultilingualCtc, GigaamV2Ctc, GigaamV2Rnnt, GigaamV3E2eCtc, GigaamV3E2eRnnt
 from onnx_asr.models.kaldi import KaldiTransducer
 from onnx_asr.models.nemo import NemoConformerAED, NemoConformerCtc, NemoConformerRnnt, NemoConformerTdt
@@ -23,6 +24,7 @@ from onnx_asr.preprocessors.numpy_preprocessor import (
     GigaamPreprocessorNumpy,
     KaldiPreprocessorNumpy,
     NemoPreprocessorNumpy,
+    W2vBertPreprocessorNumpy,
     WhisperPreprocessorNumpy,
 )
 from onnx_asr.preprocessors.preprocessor import ConcurrentPreprocessor, IdentityPreprocessor, OnnxPreprocessor
@@ -58,6 +60,8 @@ AsrNames = Literal[
 """Supported ASR model names (can be automatically downloaded from the Hugging Face)."""
 
 AsrTypeNames = Literal[
+    "espnet-aed",
+    "espnet-ctc",
     "kaldi-rnnt",
     "nemo-conformer-ctc",
     "nemo-conformer-rnnt",
@@ -78,7 +82,9 @@ VadTypeNames = Literal["pyannote"]
 """Supported VAD model types."""
 
 AsrTypes: TypeAlias = (
-    GigaamV2Ctc
+    EspnetAED
+    | EspnetCtc
+    | GigaamV2Ctc
     | GigaamV2Rnnt
     | KaldiTransducer
     | NemoConformerCtc
@@ -112,6 +118,8 @@ def create_asr_resolver(
         "nemo-parakeet-tdt-0.6b-v3": NemoConformerTdt,
         "nemo-canary-1b-v2": NemoConformerAED,
         "whisper-base": WhisperOrt,
+        "espnet-aed": EspnetAED,
+        "espnet-ctc": EspnetCtc,
         "kaldi-rnnt": KaldiTransducer,
         "nemo-conformer-ctc": NemoConformerCtc,
         "nemo-conformer-rnnt": NemoConformerRnnt,
@@ -222,7 +230,10 @@ class Manager:
             return IdentityPreprocessor()
 
         preprocessor: Preprocessor
-        if self.use_numpy_preprocessors:
+        if name == "w2vbert":
+            # There is no ONNX preprocessor graph for w2v-BERT features, always use NumPy.
+            preprocessor = W2vBertPreprocessorNumpy(name)
+        elif self.use_numpy_preprocessors:
             if name.startswith("gigaam"):
                 preprocessor = GigaamPreprocessorNumpy(name)
             elif name in ("kaldi", "wespeaker"):
@@ -329,6 +340,7 @@ def load_model(
                 GigaAM v3 (`gigaam-v3-ctc` | `gigaam-v3-rnnt` |
                            `gigaam-v3-e2e-ctc` | `gigaam-v3-e2e-rnnt`)
                 GigaAM Multilingual (`gigaam-multilingual-ctc` | `gigaam-multilingual-large-ctc`)
+                ESPnet E-Branchformer (`espnet-ctc` | `espnet-aed`)
                 Kaldi Transducer (`kaldi-rnnt`)
                 NeMo Conformer (`nemo-conformer-ctc` | `nemo-conformer-rnnt` | `nemo-conformer-tdt` |
                                 `nemo-conformer-aed`)

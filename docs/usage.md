@@ -206,6 +206,8 @@ API reference: [onnx_asr.load_model][], [recognize][onnx_asr.adapters.AsrAdapter
 ### Supported model types
 
 * All models from [supported model names](#supported-model-names)
+* `espnet-ctc` for ESPnet E-Branchformer with CTC decoder (see [conversion](conversion.md#espnet-e-branchformer-ctc-and-attention-decoder))
+* `espnet-aed` for ESPnet E-Branchformer with Transformer decoder (see [conversion](conversion.md#espnet-e-branchformer-ctc-and-attention-decoder))
 * `kaldi-rnnt` or `vosk` for Kaldi Icefall Zipformer with stateless RNN-T decoder
 * `nemo-conformer-ctc` for NeMo Conformer/FastConformer/Parakeet with CTC decoder
 * `nemo-conformer-rnnt` for NeMo Conformer/FastConformer/Parakeet with RNN-T decoder

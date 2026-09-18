@@ -48,6 +48,8 @@ class Resolver(Generic[T]):
     offline: bool = False
     local_dir: Path | None = None
     repo_id: str | None = None
+    subfolder: str | None = None
+    """Directory inside the Hub repository that holds the model, for a repository with one model per subfolder."""
 
     def __init__(  # noqa: C901
         self,
@@ -59,7 +61,13 @@ class Resolver(Generic[T]):
     ):
         """Create model loader."""
         if model is not None:
-            if "/" in model:
+            if model.count("/") >= 2:
+                # `namespace/repo/subfolder`: one model of a repository that holds
+                # several, one per directory (the OpenVoiceOS community mirrors)
+                namespace, repo, subfolder = model.split("/", 2)
+                self.repo_id = f"{namespace}/{repo}"
+                self.subfolder = subfolder.strip("/")
+            elif "/" in model:
                 self.repo_id = model
             elif model in model_repos:
                 self.repo_id = model_repos[model]
@@ -97,7 +105,13 @@ class Resolver(Generic[T]):
 
         assert self.repo_id is not None
         return Path(
-            hf_hub_download(self.repo_id, "config.json", local_dir=self.local_dir, local_files_only=local_files_only)  # nosec
+            hf_hub_download(
+                self.repo_id,
+                "config.json",
+                subfolder=self.subfolder,
+                local_dir=self.local_dir,
+                local_files_only=local_files_only,
+            )  # nosec
         )
 
     def _download_model(self, quantization: str | None, *, local_files_only: bool) -> Path:
@@ -116,9 +130,12 @@ class Resolver(Generic[T]):
             *(str(path.with_suffix(".onnx?data")) for file in files if (path := Path(file)).suffix == ".onnx"),
         ]
 
+        if self.subfolder:
+            files = [f"{self.subfolder}/{file}" for file in files]
+
         assert self.repo_id is not None
         try:
-            return Path(
+            path = Path(
                 snapshot_download(
                     self.repo_id, local_dir=self.local_dir, local_files_only=local_files_only, allow_patterns=files
                 )  # nosec
@@ -132,6 +149,7 @@ class Resolver(Generic[T]):
             if not local_files_only:
                 raise
             raise ModelFileNotFoundError(", ".join(files), self.repo_id) from e
+        return path / self.subfolder if self.subfolder else path
 
     def _resolve_model_files(self, path: Path, quantization: str | None) -> dict[str, Path]:
         files = self.model_type._get_model_files(quantization)

@@ -102,6 +102,51 @@ def test_custom_model_type() -> None:
     assert loader.repo_id == "alphacep/vosk-model-ru"
 
 
+def test_subfolder_model_id() -> None:
+    # `namespace/repo/subfolder` names one model of a repository that holds several
+    loader = Resolver(KaldiTransducer, "OpenVoiceOS/onnx-asr-community-w2v-ctc/lgris__bp500-xlsr")
+    assert loader.repo_id == "OpenVoiceOS/onnx-asr-community-w2v-ctc"
+    assert loader.subfolder == "lgris__bp500-xlsr"
+
+
+def test_subfolder_model_id_nested() -> None:
+    loader = Resolver(KaldiTransducer, "namespace/repo/models/pt/")
+    assert loader.repo_id == "namespace/repo"
+    assert loader.subfolder == "models/pt"
+
+
+def test_plain_model_id_has_no_subfolder() -> None:
+    loader = Resolver(KaldiTransducer, "alphacep/vosk-model-ru")
+    assert loader.subfolder is None
+
+
+def test_subfolder_download_scopes_patterns_and_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_snapshot(repo_id: str, **kwargs: object) -> str:
+        seen["repo_id"] = repo_id
+        seen["allow_patterns"] = kwargs["allow_patterns"]
+        return str(tmp_path)
+
+    def fake_config(repo_id: str, filename: str, **kwargs: object) -> str:
+        seen["config_repo_id"] = repo_id
+        seen["config_subfolder"] = kwargs["subfolder"]
+        return str(Path(tmp_path, filename))
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot)
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_config)
+    loader = Resolver(KaldiTransducer, "namespace/repo/sub")
+    loader._download_config(local_files_only=True)
+    path = loader._download_model(None, local_files_only=True)
+    assert seen["repo_id"] == seen["config_repo_id"] == "namespace/repo"
+    assert seen["config_subfolder"] == "sub"
+    patterns = seen["allow_patterns"]
+    assert isinstance(patterns, list)
+    assert patterns
+    assert all(pattern.startswith("sub/") for pattern in patterns), patterns
+    assert path == Path(tmp_path, "sub")
+
+
 def test_custom_model_type_with_path(tmp_path: Path) -> None:
     loader = Resolver(KaldiTransducer, local_dir=tmp_path)
     assert loader.model_type == KaldiTransducer

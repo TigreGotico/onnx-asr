@@ -53,6 +53,76 @@ owner link to find other languages and model sizes.
 Licenses can differ between repositories in a family. Always check the selected model
 card and its upstream model before redistribution or commercial use.
 
+### One repository, one model per subfolder
+
+[`OpenVoiceOS/onnx-asr-community-w2v-ctc`](https://huggingface.co/OpenVoiceOS/onnx-asr-community-w2v-ctc)
+holds 47 Wav2Vec2-family CTC conversions as subfolders of one repository. Name the
+subfolder after the repository id to load one of them:
+
+```py
+import onnx_asr
+
+model = onnx_asr.load_model("OpenVoiceOS/onnx-asr-community-w2v-ctc/lgris__bp500-xlsr")
+print(model.recognize("test.wav"))
+```
+
+Each subfolder carries `config.json`, `model.onnx` (with `model.onnx.data` for the
+1B models), `vocab.txt`, a card and the licence file. The card states the checks
+made at export: transcript parity against the PyTorch model on a few clips, and a
+word error rate only where an evaluation set could be named. Feature normalisation
+is inside the graph; input is 16 kHz mono.
+
+| Subfolder | Language | Architecture | Upstream model | License | WER at export |
+|---|---|---|---|---|---|
+| `ghananlpcommunity__w2v-bert-2.0_brazilian_portugese_alpha_farmerline` | Portuguese (Brazil) | w2v-bert 2.0 CTC | [`ghananlpcommunity/w2v-bert-2.0_brazilian_portugese_alpha_farmerline`](https://huggingface.co/ghananlpcommunity/w2v-bert-2.0_brazilian_portugese_alpha_farmerline) | mit | not recorded |
+| `ghananlpcommunity__w2v-bert-2.0_dyula_farmerline` | Dyula | w2v-bert 2.0 CTC | [`ghananlpcommunity/w2v-bert-2.0_dyula_farmerline`](https://huggingface.co/ghananlpcommunity/w2v-bert-2.0_dyula_farmerline) | mit | not recorded |
+| `ghananlpcommunity__w2v-bert-2.0_ewe_2_farmerline` | Ewe | w2v-bert 2.0 CTC | [`ghananlpcommunity/w2v-bert-2.0_ewe_2_farmerline`](https://huggingface.co/ghananlpcommunity/w2v-bert-2.0_ewe_2_farmerline) | mit | not recorded |
+| `ghananlpcommunity__w2v-bert-2.0_igbo_v1_farmerline` | Igbo | w2v-bert 2.0 CTC | [`ghananlpcommunity/w2v-bert-2.0_igbo_v1_farmerline`](https://huggingface.co/ghananlpcommunity/w2v-bert-2.0_igbo_v1_farmerline) | mit | not recorded |
+| `ghananlpcommunity__w2v-bert-2.0_kamba_farmerline` | Kamba | w2v-bert 2.0 CTC | [`ghananlpcommunity/w2v-bert-2.0_kamba_farmerline`](https://huggingface.co/ghananlpcommunity/w2v-bert-2.0_kamba_farmerline) | mit | not recorded |
+| `ghananlpcommunity__w2v-bert-2.0_kikuyu_farmerline` | Kikuyu | w2v-bert 2.0 CTC | [`ghananlpcommunity/w2v-bert-2.0_kikuyu_farmerline`](https://huggingface.co/ghananlpcommunity/w2v-bert-2.0_kikuyu_farmerline) | mit | not recorded |
+| `ghananlpcommunity__w2v-bert-2.0_krio_v3_farmerline` | Krio | w2v-bert 2.0 CTC | [`ghananlpcommunity/w2v-bert-2.0_krio_v3_farmerline`](https://huggingface.co/ghananlpcommunity/w2v-bert-2.0_krio_v3_farmerline) | mit | not recorded |
+| `ghananlpcommunity__w2v-bert-2.0_luganda_farmerline` | Luganda | w2v-bert 2.0 CTC | [`ghananlpcommunity/w2v-bert-2.0_luganda_farmerline`](https://huggingface.co/ghananlpcommunity/w2v-bert-2.0_luganda_farmerline) | mit | not recorded |
+| `ghananlpcommunity__w2v-bert-2.0_somali_alpha_farmerline` | Somali | w2v-bert 2.0 CTC | [`ghananlpcommunity/w2v-bert-2.0_somali_alpha_farmerline`](https://huggingface.co/ghananlpcommunity/w2v-bert-2.0_somali_alpha_farmerline) | mit | not recorded |
+| `ghananlpcommunity__w2v-bert-2.0_swahili_alpha_farmerline` | Swahili | w2v-bert 2.0 CTC | [`ghananlpcommunity/w2v-bert-2.0_swahili_alpha_farmerline`](https://huggingface.co/ghananlpcommunity/w2v-bert-2.0_swahili_alpha_farmerline) | mit | not recorded |
+| `ghananlpcommunity__w2v-bert-2.0_yoruba_v1_farmerline` | Yoruba | w2v-bert 2.0 CTC | [`ghananlpcommunity/w2v-bert-2.0_yoruba_v1_farmerline`](https://huggingface.co/ghananlpcommunity/w2v-bert-2.0_yoruba_v1_farmerline) | mit | not recorded |
+| `lgris__WavLM-large-CORAA-pt` | Portuguese (Brazil) | WavLM CTC | [`lgris/WavLM-large-CORAA-pt`](https://huggingface.co/lgris/WavLM-large-CORAA-pt) | apache-2.0 | not recorded |
+| `lgris__base_10k_8khz_pt` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/base_10k_8khz_pt`](https://huggingface.co/lgris/base_10k_8khz_pt) | apache-2.0 | 0.983 (FLEURS pt_br test, first 50 clips) |
+| `lgris__bp-cetuc100-xlsr` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/bp-cetuc100-xlsr`](https://huggingface.co/lgris/bp-cetuc100-xlsr) | apache-2.0 | 0.886 (FLEURS pt_br test, first 50 clips) |
+| `lgris__bp-commonvoice10-xlsr` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/bp-commonvoice10-xlsr`](https://huggingface.co/lgris/bp-commonvoice10-xlsr) | apache-2.0 | 0.206 (FLEURS pt_br test, first 50 clips) |
+| `lgris__bp-commonvoice100-xlsr` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/bp-commonvoice100-xlsr`](https://huggingface.co/lgris/bp-commonvoice100-xlsr) | apache-2.0 | 0.169 (FLEURS pt_br test, first 50 clips) |
+| `lgris__bp-lapsbm1-xlsr` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/bp-lapsbm1-xlsr`](https://huggingface.co/lgris/bp-lapsbm1-xlsr) | apache-2.0 | 0.282 (FLEURS pt_br test, first 50 clips) |
+| `lgris__bp-mls100-xlsr` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/bp-mls100-xlsr`](https://huggingface.co/lgris/bp-mls100-xlsr) | apache-2.0 | 0.235 (FLEURS pt_br test, first 50 clips) |
+| `lgris__bp-sid10-xlsr` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/bp-sid10-xlsr`](https://huggingface.co/lgris/bp-sid10-xlsr) | apache-2.0 | 0.340 (FLEURS pt_br test, first 50 clips) |
+| `lgris__bp-tedx100-xlsr` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/bp-tedx100-xlsr`](https://huggingface.co/lgris/bp-tedx100-xlsr) | apache-2.0 | 0.203 (FLEURS pt_br test, first 50 clips) |
+| `lgris__bp-voxforge1-xlsr` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/bp-voxforge1-xlsr`](https://huggingface.co/lgris/bp-voxforge1-xlsr) | apache-2.0 | 0.546 (FLEURS pt_br test, first 50 clips) |
+| `lgris__bp400-xlsr` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/bp400-xlsr`](https://huggingface.co/lgris/bp400-xlsr) | apache-2.0 | 0.154 (FLEURS pt_br test, first 50 clips) |
+| `lgris__bp500-base100k_voxpopuli` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/bp500-base100k_voxpopuli`](https://huggingface.co/lgris/bp500-base100k_voxpopuli) | apache-2.0 | 0.214 (FLEURS pt_br test, first 50 clips) |
+| `lgris__bp500-base10k_voxpopuli` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/bp500-base10k_voxpopuli`](https://huggingface.co/lgris/bp500-base10k_voxpopuli) | apache-2.0 | 0.196 (FLEURS pt_br test, first 50 clips) |
+| `lgris__bp500-xlsr` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/bp500-xlsr`](https://huggingface.co/lgris/bp500-xlsr) | apache-2.0 | 0.151 (FLEURS pt_br test, first 50 clips) |
+| `lgris__bp_400h_xlsr2_300M` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/bp_400h_xlsr2_300M`](https://huggingface.co/lgris/bp_400h_xlsr2_300M) | apache-2.0 | 0.123 (FLEURS pt_br test, first 50 clips) |
+| `lgris__sew-tiny-portuguese-cv` | Portuguese (Brazil) | SEW CTC | [`lgris/sew-tiny-portuguese-cv`](https://huggingface.co/lgris/sew-tiny-portuguese-cv) | apache-2.0 | not recorded |
+| `lgris__sew-tiny-portuguese-cv7` | Portuguese (Brazil) | SEW CTC | [`lgris/sew-tiny-portuguese-cv7`](https://huggingface.co/lgris/sew-tiny-portuguese-cv7) | apache-2.0 | 0.317 (FLEURS pt_br test, first 50 clips) |
+| `lgris__sew-tiny-portuguese-cv8` | Portuguese (Brazil) | SEW CTC | [`lgris/sew-tiny-portuguese-cv8`](https://huggingface.co/lgris/sew-tiny-portuguese-cv8) | apache-2.0 | not recorded |
+| `lgris__wav2vec2-large-xls-r-300m-pt-cv` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-large-xls-r-300m-pt-cv`](https://huggingface.co/lgris/wav2vec2-large-xls-r-300m-pt-cv) | apache-2.0 | 0.340 (FLEURS pt_br test, first 50 clips) |
+| `lgris__wav2vec2-large-xlsr-coraa-portuguese-cv7` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-large-xlsr-coraa-portuguese-cv7`](https://huggingface.co/lgris/wav2vec2-large-xlsr-coraa-portuguese-cv7) | apache-2.0 | 0.197 (FLEURS pt_br test, first 50 clips) |
+| `lgris__wav2vec2-large-xlsr-coraa-portuguese-cv8` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-large-xlsr-coraa-portuguese-cv8`](https://huggingface.co/lgris/wav2vec2-large-xlsr-coraa-portuguese-cv8) | apache-2.0 | 0.197 (FLEURS pt_br test, first 50 clips) |
+| `lgris__wav2vec2-large-xlsr-open-brazilian-portuguese` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-large-xlsr-open-brazilian-portuguese`](https://huggingface.co/lgris/wav2vec2-large-xlsr-open-brazilian-portuguese) | apache-2.0 | 0.184 (FLEURS pt_br test, first 50 clips) |
+| `lgris__wav2vec2-large-xlsr-open-brazilian-portuguese-v2` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-large-xlsr-open-brazilian-portuguese-v2`](https://huggingface.co/lgris/wav2vec2-large-xlsr-open-brazilian-portuguese-v2) | apache-2.0 | 0.156 (FLEURS pt_br test, first 50 clips) |
+| `lgris__wav2vec2-podcasts-tagarela-combined` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-podcasts-tagarela-combined`](https://huggingface.co/lgris/wav2vec2-podcasts-tagarela-combined) | apache-2.0 | 0.162 (FLEURS pt_br test, first 50 clips) |
+| `lgris__wav2vec2-podcasts-tagarela-v2` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-podcasts-tagarela-v2`](https://huggingface.co/lgris/wav2vec2-podcasts-tagarela-v2) | apache-2.0 | 0.152 (FLEURS pt_br test, first 50 clips) |
+| `lgris__wav2vec2-xls-r-1b-cv8` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-xls-r-1b-cv8`](https://huggingface.co/lgris/wav2vec2-xls-r-1b-cv8) | apache-2.0 | 0.272 (FLEURS pt_br test, first 50 clips) |
+| `lgris__wav2vec2-xls-r-1b-portuguese-CORAA-3` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-xls-r-1b-portuguese-CORAA-3`](https://huggingface.co/lgris/wav2vec2-xls-r-1b-portuguese-CORAA-3) | apache-2.0 | 0.524 (FLEURS pt_br test, first 50 clips) |
+| `lgris__wav2vec2-xls-r-300m-gn-cv8` | Guarani | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-xls-r-300m-gn-cv8`](https://huggingface.co/lgris/wav2vec2-xls-r-300m-gn-cv8) | apache-2.0 | not recorded |
+| `lgris__wav2vec2-xls-r-300m-gn-cv8-3` | Guarani | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-xls-r-300m-gn-cv8-3`](https://huggingface.co/lgris/wav2vec2-xls-r-300m-gn-cv8-3) | apache-2.0 | not recorded |
+| `lgris__wav2vec2-xls-r-300m-gn-cv8-4` | Guarani | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-xls-r-300m-gn-cv8-4`](https://huggingface.co/lgris/wav2vec2-xls-r-300m-gn-cv8-4) | apache-2.0 | not recorded |
+| `lgris__wav2vec2-xls-r-300m-tagarela-combined` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-xls-r-300m-tagarela-combined`](https://huggingface.co/lgris/wav2vec2-xls-r-300m-tagarela-combined) | apache-2.0 | 0.145 (FLEURS pt_br test, first 50 clips) |
+| `lgris__wav2vec2-xls-r-300m-tagarela-v2` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-xls-r-300m-tagarela-v2`](https://huggingface.co/lgris/wav2vec2-xls-r-300m-tagarela-v2) | apache-2.0 | 0.125 (FLEURS pt_br test, first 50 clips) |
+| `lgris__wav2vec2-xls-r-gn-cv7` | Guarani | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-xls-r-gn-cv7`](https://huggingface.co/lgris/wav2vec2-xls-r-gn-cv7) | apache-2.0 | not recorded |
+| `lgris__wav2vec2-xls-r-pt-cv7-from-bp400h` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2-xls-r-pt-cv7-from-bp400h`](https://huggingface.co/lgris/wav2vec2-xls-r-pt-cv7-from-bp400h) | apache-2.0 | 0.155 (FLEURS pt_br test, first 50 clips) |
+| `lgris__wav2vec2_base_10k_8khz_pt_cv7_2` | Portuguese (Brazil) | Wav2Vec2 / XLS-R CTC | [`lgris/wav2vec2_base_10k_8khz_pt_cv7_2`](https://huggingface.co/lgris/wav2vec2_base_10k_8khz_pt_cv7_2) | apache-2.0 | 0.967 (FLEURS pt_br test, first 50 clips) |
+| `lgris__wavlm-large-CORAA-pt-cv7` | Portuguese (Brazil) | WavLM CTC | [`lgris/wavlm-large-CORAA-pt-cv7`](https://huggingface.co/lgris/wavlm-large-CORAA-pt-cv7) | apache-2.0 | not recorded |
+
+
 ## Optimized variants
 
 Some community repositories retain an existing model but provide a materially different

@@ -39,6 +39,8 @@ class AsrConfig(TypedDict, total=False):
     subsampling_factor: int
     max_tokens_per_step: int
     max_sequence_length: int
+    default_language: str
+    language_aliases: dict[str, str]
 
 
 class Preprocessor(Protocol):

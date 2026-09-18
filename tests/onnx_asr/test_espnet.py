@@ -54,7 +54,9 @@ def make_slice_model(output_name: str, size: int, lens_name: str) -> onnx.ModelP
         ],
         initializers,
     )
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model.ir_version = 10
+    return model
 
 
 def make_decoder_model(table: np.ndarray) -> onnx.ModelProto:
@@ -71,7 +73,9 @@ def make_decoder_model(table: np.ndarray) -> onnx.ModelProto:
         [helper.make_tensor_value_info("logprobs", TensorProto.FLOAT, ["b", "l", VOCAB_SIZE])],
         [numpy_helper.from_array(table, "table")],
     )
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model.ir_version = 10
+    return model
 
 
 def one_hot_features(token_ids: list[int]) -> np.ndarray:

@@ -74,7 +74,10 @@ def test_loads_registered_model_type(model_dir: Path) -> None:
 
 
 def test_config_alone_selects_the_model_type(model_dir: Path) -> None:
-    assert isinstance(onnx_asr.load_model(str(model_dir), model_dir).asr, OmnilingualCtc)
+    # A repository-shaped name and a local directory: the directory is used
+    # offline and config.json picks the model type. A filesystem path as the
+    # name only looks like a repository on POSIX, where it contains "/".
+    assert isinstance(onnx_asr.load_model("someone/omnilingual-model", model_dir).asr, OmnilingualCtc)
 
 
 def test_reads_a_space_token_from_tokens_txt(model: onnx_asr.adapters.TextResultsAsrAdapter) -> None:

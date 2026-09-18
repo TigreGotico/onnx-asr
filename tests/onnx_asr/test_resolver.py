@@ -2,7 +2,9 @@ import sys
 from pathlib import Path
 from typing import get_args
 
+import huggingface_hub
 import pytest
+from huggingface_hub.errors import LocalEntryNotFoundError
 
 from onnx_asr.asr import Asr, BaseAsr
 from onnx_asr.loader import (
@@ -140,6 +142,38 @@ def test_model_file_not_found_error(tmp_path: Path) -> None:
 def test_offline_model_file_not_found_error() -> None:
     with pytest.raises(ModelFileNotFoundError):
         create_asr_resolver("onnx-community/whisper-tiny", offline=True).resolve_model(quantization="fp16")
+
+
+def _patch_hub_with_incomplete_snapshot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # A cached config.json and a snapshot_download that raises the way
+    # huggingface_hub 1.x does for an incomplete cached snapshot, so the test
+    # depends on no real cache and no network.
+    config = Path(tmp_path, "config.json")
+    config.write_text('{"model_type": "whisper"}')
+
+    def cached_config(*_args: object, **_kwargs: object) -> str:
+        return str(config)
+
+    def raise_incomplete(*_args: object, **_kwargs: object) -> str:
+        message = "incomplete snapshot"
+        raise LocalEntryNotFoundError(message)
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", cached_config)
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", raise_incomplete)
+
+
+def test_offline_incomplete_snapshot_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _patch_hub_with_incomplete_snapshot(monkeypatch, tmp_path)
+    with pytest.raises(ModelFileNotFoundError):
+        create_asr_resolver("onnx-community/whisper-tiny", offline=True).resolve_model(quantization="fp16")
+
+
+def test_online_local_entry_error_is_not_a_missing_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # With network access the same exception means the download failed, which
+    # must not be reported as a missing model file.
+    _patch_hub_with_incomplete_snapshot(monkeypatch, tmp_path)
+    with pytest.raises(LocalEntryNotFoundError):
+        create_asr_resolver("onnx-community/whisper-tiny", offline=False).resolve_model(quantization="fp16")
 
 
 def test_invalid_model_type_in_config_error(tmp_path: Path) -> None:

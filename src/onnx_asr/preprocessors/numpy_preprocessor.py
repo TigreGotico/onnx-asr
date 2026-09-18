@@ -147,6 +147,7 @@ class NemoPreprocessorNumpy(_NumpyPreprocessor):
 
     def __init__(self, name: str):  # noqa: D107
         assert name.startswith("nemo")
+        self._normalize = not name.endswith("_raw")
         super().__init__(name)
 
     def __call__(
@@ -167,6 +168,9 @@ class NemoPreprocessorNumpy(_NumpyPreprocessor):
         log_mel_spectrogram = np.log(mel_spectrogram + self._log_zero_guard_value)
 
         features_lens = waveforms_lens // self._hop_length
+        if not self._normalize:
+            return log_mel_spectrogram.transpose(0, 2, 1), features_lens
+
         mask = np.arange(log_mel_spectrogram.shape[1])[None, :, None] < features_lens[:, None, None]
         mean = np.divide(
             np.where(mask, log_mel_spectrogram, 0.0).sum(axis=1, keepdims=True),

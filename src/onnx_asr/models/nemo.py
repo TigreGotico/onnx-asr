@@ -23,7 +23,9 @@ class _NemoConformer(_AsrWithDecoding):
 
     @property
     def _preprocessor_name(self) -> str:
-        return f"nemo{self._features_size}"
+        # `normalize: NA` checkpoints (e.g. Nemotron ASR) expect raw log-mel features
+        suffix = "" if self.config.get("normalize", True) else "_raw"
+        return f"nemo{self._features_size}{suffix}"
 
     @property
     def _subsampling_factor(self) -> int:

@@ -175,3 +175,28 @@ word-delimiter token (`|`) becomes `▁`, which onnx-asr converts to a literal s
 when decoding. `subsampling_factor` is the product of the feature-encoder conv strides
 (320 for the standard wav2vec2/XLS-R conv stack) and is only used to scale token
 timestamps.
+
+## HuggingFace w2v-BERT 2.0 CTC (pre-built graphs)
+
+A `Wav2Vec2BertForCTC` fine-tune exported from PyTorch takes raw audio only if the
+feature extraction was traced into the graph. A graph exported the other way, with
+`input_features` of 160 values per step and an `attention_mask`, keeps the
+`SeamlessM4TFeatureExtractor` outside. onnx-asr runs such a graph as `w2v-bert-ctc`
+and computes the features itself with the `seamless` preprocessor, which reproduces
+the HuggingFace extractor: 80 Kaldi-style log mel bins per 10 ms, per-bin
+normalisation over the utterance with the sample variance, pairs of frames stacked.
+On the CPU (NumPy) path the features are identical to the HuggingFace extractor bit
+for bit, which is what makes an int8 graph decode the same text as the pipeline it
+was quantised from.
+
+Lay the model out as:
+
+```
+model.int8.onnx   # or model.onnx; inputs input_features, attention_mask; output logits
+vocab.txt         # "<token> <id>" per line, from vocab.json, with the pad token as <blk> and | as ▁
+config.json       # {"model_type": "w2v-bert-ctc", "subsampling_factor": 640}
+```
+
+`subsampling_factor` is 640: 10 ms frames, stacked in pairs, then the adapter's
+stride of 2. It scales token timestamps and nothing else. Load with
+`onnx_asr.load_model("w2v-bert-ctc", path, quantization="int8")`.

@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import onnxscript
 
-from preprocessors import gigaam, kaldi, nemo, resample, whisper
+from preprocessors import gigaam, kaldi, nemo, resample, seamless, whisper
 
 
 def save_onnx(
@@ -34,6 +34,7 @@ def save_preprocessor_models(preprocessors_dir: Path, version: str) -> None:
         "nemo128.onnx": nemo.NemoPreprocessor128,
         "whisper80.onnx": whisper.WhisperPreprocessor80,
         "whisper128.onnx": whisper.WhisperPreprocessor128,
+        "seamless.onnx": seamless.SeamlessPreprocessor,
         "gigaam_v2_conv.onnx": gigaam.GigaamPreprocessorV2Conv,
         "gigaam_v3_conv.onnx": gigaam.GigaamPreprocessorV3Conv,
         "kaldi_conv.onnx": kaldi.KaldiPreprocessorFastConv,
@@ -69,6 +70,8 @@ def save_fbanks(preprocessors_dir: Path) -> None:
         "nemo128": nemo.melscale_fbanks128,
         "whisper80": whisper.melscale_fbanks80,
         "whisper128": whisper.melscale_fbanks128,
+        "seamless": seamless.seamless_mel_banks_f64,
+        "seamless_window": seamless.seamless_window_f64,
     }
     np.savez_compressed(Path(preprocessors_dir, "fbanks"), allow_pickle=False, **fbanks)
 

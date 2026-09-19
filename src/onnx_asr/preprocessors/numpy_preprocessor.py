@@ -25,6 +25,8 @@ class _NumpyPreprocessor:
             self._melscale_fbanks = data[name]
             if name == "gigaam_v3":
                 self._window = data["gigaam_v3_window"]
+            if name == "seamless":
+                self._window_f64 = data["seamless_window"]
 
 
 class GigaamPreprocessorNumpy(_NumpyPreprocessor):
@@ -134,6 +136,72 @@ class KaldiPreprocessorNumpy(_NumpyPreprocessor):
             features[np.arange(features.shape[1]) >= features_lens[:, None]] = 0
 
         return features, features_lens
+
+
+class SeamlessPreprocessorNumpy(_NumpyPreprocessor):
+    """SeamlessM4T (w2v-BERT 2.0) fbank preprocessor in NumPy.
+
+    Mirrors ``transformers.SeamlessM4TFeatureExtractor`` operation for operation,
+    so an int8 w2v-BERT graph decodes the same text as the PyTorch pipeline:
+    float64 up to the log, the spectrum rounded to complex64 before the power,
+    the log mel cast to float32, then per-bin normalisation with the sample
+    variance and pairs of frames stacked into 160 values.
+    """
+
+    _n_fft = 512
+    _win_length = 400
+    _hop_length = 160
+    _stride = 2
+    _preemphasis_coefficient = 0.97
+    _mel_floor = 1.192092955078125e-07
+    _norm_eps = 1e-7
+
+    def __init__(self, name: str):  # noqa: D107
+        assert name == "seamless"
+        super().__init__(name)
+        self._window = self._window_f64
+
+    def __call__(
+        self, waveforms: npt.NDArray[np.float32], waveforms_lens: npt.NDArray[np.int64]
+    ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.int64]]:
+        """Convert waveforms to model features."""
+        features_lens = 1 + (waveforms_lens - self._win_length) // self._hop_length
+        num_frames = int(features_lens.max()) if features_lens.size else 0
+        # the reference pads an odd frame count to a multiple of the stride and
+        # masks the padded frame, so a trailing frame is kept, not dropped
+        num_frames += num_frames % self._stride
+        batch = np.zeros((waveforms.shape[0], num_frames, self._melscale_fbanks.shape[1]), dtype=np.float32)
+        for b in range(waveforms.shape[0]):
+            waveform = waveforms[b, : waveforms_lens[b]].astype(np.float64) * (2**15)
+            n = int(features_lens[b])
+            if n <= 0:
+                continue
+            frames = np.lib.stride_tricks.sliding_window_view(waveform, self._win_length)[:: self._hop_length][:n]
+            frames = frames - frames.mean(axis=-1, keepdims=True)
+            frames = np.concatenate(
+                [
+                    frames[:, :1] * (1 - self._preemphasis_coefficient),
+                    frames[:, 1:] - self._preemphasis_coefficient * frames[:, :-1],
+                ],
+                axis=-1,
+            )
+            frames = frames * self._window
+            spectrum = np.fft.rfft(frames, self._n_fft).astype(np.complex64)
+            power = np.abs(spectrum, dtype=np.float64) ** 2
+            mel = np.maximum(self._mel_floor, np.dot(power, self._melscale_fbanks))
+            # Fortran order, as the reference transposes a (bins, frames) array:
+            # the axis-0 mean and variance then sum pairwise along memory, and
+            # a C-ordered array gives a different last bit.
+            log_mel = np.asfortranarray(np.log(mel).astype(np.float32))
+            log_mel = (log_mel - np.expand_dims(log_mel.mean(0), 0)) / np.sqrt(
+                np.expand_dims(log_mel.var(0, ddof=1), 0) + self._norm_eps
+            )
+            batch[b, :n] = log_mel
+
+        features = batch.reshape(batch.shape[0], num_frames // self._stride, -1)
+        # the reference masks a stacked frame by its second half, so a pair
+        # completed by the padded frame is not counted
+        return features, features_lens // self._stride
 
 
 class NemoPreprocessorNumpy(_NumpyPreprocessor):
